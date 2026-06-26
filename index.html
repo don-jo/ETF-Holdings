@@ -155,6 +155,7 @@ const SAMPLE = {
 };
 
 let DATA=SAMPLE, activeTab="stock", sortKey="wCur", sortDir=-1, etfSel=[];
+let lkArr=[], lkSort={key:"valCur",dir:-1}, lkBd="", lkCd="";
 let etfMeta={}, etfHold={};  // [date][etf]={name,aum}  /  [date][etf]={stock:{w,val}}
 
 const won=v=>(v==null||isNaN(v))?"-":Math.round(v).toLocaleString();
@@ -317,18 +318,47 @@ async function doLookup(){
   const map={};
   db.forEach(e=>map[e.etf]={etf:e.etf,name:e.name,aum:e.aum,wCur:e.w,valCur:e.val,wCmp:0,valCmp:0});
   dc.forEach(e=>{map[e.etf]=map[e.etf]||{etf:e.etf,name:e.name,aum:e.aum,wCur:0,valCur:0};map[e.etf].wCmp=e.w;map[e.etf].valCmp=e.val;if(!map[e.etf].aum)map[e.etf].aum=e.aum;});
-  let arr=Object.values(map).map(e=>{const dV=e.valCur-e.valCmp;
+  lkArr=Object.values(map).map(e=>{const dV=e.valCur-e.valCmp;
     let st=e.valCmp<=0&&e.valCur>0?"신규":(e.valCur<=0&&e.valCmp>0?"제외":(dV>0?"증가":(dV<0?"감소":"유지")));
-    return {...e,dVal:dV,status:st};}).sort((a,b)=>b.valCur-a.valCur);
-  if(arr.length===0){lkTableWrap.innerHTML=`<div style="padding:14px" class="muted">이 종목의 ETF 상세 데이터가 없습니다. (샘플엔 일부 종목만 포함)</div>`;lkTableWrap.style.display="block";return;}
-  let h=`<table><thead><tr><th class="l">#</th><th class="l">ETF코드</th><th class="l">ETF명</th><th>AUM(억)</th>
-    <th>비중%<br><span class="muted">${bd}</span></th><th>보유(억)<br><span class="muted">${bd}</span></th>
-    <th>비중%<br><span class="muted">${cd}</span></th><th>보유(억)<br><span class="muted">${cd}</span></th>
-    <th>증감(억)</th><th>상태</th></tr></thead><tbody>`;
-  arr.forEach((e,i)=>{h+=`<tr><td class="l muted">${i+1}</td><td class="l">${e.etf}</td><td class="l name">${e.name}</td>
-    <td>${won(e.aum)}</td><td>${pct(e.wCur)}</td><td>${won(e.valCur)}</td><td>${pct(e.wCmp)}</td><td>${won(e.valCmp)}</td>
-    <td class="${sCls(e.dVal)}">${sTxt(e.dVal,'won')}</td><td class="l"><span class="tag ${e.status}">${e.status}</span></td></tr>`;});
+    return {...e,dVal:dV,status:st};});
+  lkBd=bd; lkCd=cd; lkSort={key:"valCur",dir:-1};
+  if(lkArr.length===0){lkTableWrap.innerHTML=`<div style="padding:14px" class="muted">이 종목의 ETF 상세 데이터가 없습니다. (샘플엔 일부 종목만 포함)</div>`;lkTableWrap.style.display="block";return;}
+  renderLkTable();
+}
+
+function renderLkTable(){
+  if(!lkArr.length)return;
+  const cols=[
+    {k:"etf",t:"ETF코드",cls:"l"},
+    {k:"name",t:"ETF명",cls:"l name"},
+    {k:"aum",t:"AUM(억)",f:"won"},
+    {k:"wCur",t:`비중%<br><span class="muted">${lkBd}</span>`,f:"pct"},
+    {k:"valCur",t:`보유(억)<br><span class="muted">${lkBd}</span>`,f:"won"},
+    {k:"wCmp",t:`비중%<br><span class="muted">${lkCd}</span>`,f:"pct"},
+    {k:"valCmp",t:`보유(억)<br><span class="muted">${lkCd}</span>`,f:"won"},
+    {k:"dVal",t:"증감(억)",f:"wonsign"},
+    {k:"status",t:"상태",cls:"l"}
+  ];
+  const rows=[...lkArr].sort((a,b)=>{let x=a[lkSort.key],y=b[lkSort.key];
+    if(typeof x==="string"||typeof y==="string")return lkSort.dir<0?String(y).localeCompare(String(x)):String(x).localeCompare(String(y));
+    return lkSort.dir<0?y-x:x-y;});
+  const ind=lkSort.dir<0?"▼":"▲";
+  let h="<table><thead><tr><th class='l'>#</th>"+cols.map(c=>{const act=c.k===lkSort.key;
+    return `<th class="${c.cls||''}${act?' active':''}" data-k="${c.k}">${c.t}${act?`<span class="sortind">${ind}</span>`:""}</th>`;}).join("")+"</tr></thead><tbody>";
+  rows.forEach((e,i)=>{
+    h+=`<tr><td class="l muted">${i+1}</td>`+cols.map(c=>{
+      let v=e[c.k];
+      if(c.f==="pct")return `<td>${pct(v)}</td>`;
+      if(c.f==="won")return `<td>${won(v)}</td>`;
+      if(c.f==="wonsign")return `<td class="${sCls(v)}">${sTxt(v,'won')}</td>`;
+      if(c.k==="status")return `<td class="l"><span class="tag ${v}">${v}</span></td>`;
+      return `<td class="${c.cls||''}">${v}</td>`;
+    }).join("")+"</tr>";
+  });
   lkTableWrap.innerHTML=h+"</tbody>"; lkTableWrap.style.display="block";
+  lkTableWrap.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if(lkSort.key===k)lkSort.dir=-lkSort.dir; else{lkSort.key=k;lkSort.dir=-1;} renderLkTable();
+  });
 }
 
 function resolveEtf(qstr){
