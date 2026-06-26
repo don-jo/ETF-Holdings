@@ -57,7 +57,7 @@ from pykrx.website.krx.etx.core import 전종목시세_ETF
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-WORKERS = 16       # 동시 요청 수. 막힘/세션만료 잦으면 8~10으로 낮추세요.
+WORKERS = 10       # 동시 요청 수. 내부 연결풀(10)과 맞춤. 더 막히면 8로.
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
 SLEEP = 0.0        # 각 요청 후 추가 대기(초). 보통 0으로 충분.
