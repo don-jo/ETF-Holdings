@@ -1,0 +1,8 @@
+# 비밀번호 — 절대 공개 금지!
+krx_계정.txt
+
+# 대용량/불필요
+*.xlsx
+cache/
+__pycache__/
+*.pyc

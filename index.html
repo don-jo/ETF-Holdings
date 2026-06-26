@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>개별종목 보유 ETF 분석</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--panel2:#243349;--line:#334155;--text:#e2e8f0;
+    --muted:#94a3b8;--accent:#38bdf8;--accent2:#1f4e78;--up:#22c55e;--down:#ef4444;--new:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,'Segoe UI','Malgun Gothic',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+  header{background:var(--accent2);padding:14px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;position:sticky;top:0;z-index:20}
+  header h1{font-size:17px;margin:0;font-weight:700;white-space:nowrap}
+  .ctrl{display:flex;gap:6px;align-items:center}
+  .ctrl label{color:#cfe3f5;font-size:12px}
+  .sub{color:#9fc7e8;font-size:10px;margin-left:2px}
+  .arrow{color:#cfe3f5;font-weight:700;font-size:18px;margin:0 -2px}
+  select,input,button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px}
+  button{cursor:pointer;background:var(--accent);color:#06283d;border:none;font-weight:600}
+  button:hover{opacity:.9}
+  button.ghost{background:var(--panel);color:var(--text);border:1px solid var(--line)}
+  .badge{font-size:11px;color:#cfe3f5;background:#06283d;padding:2px 8px;border-radius:10px}
+  main{padding:18px 20px;max-width:1180px;margin:0 auto}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  .tab{padding:9px 16px;background:var(--panel);border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:14px;color:var(--muted)}
+  .tab.active{background:var(--accent);color:#06283d;font-weight:700;border-color:var(--accent)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{position:sticky;top:0;background:var(--panel2);cursor:pointer;user-select:none;color:#cbd5e1;font-weight:600;line-height:1.3}
+  th.l,td.l{text-align:left}
+  tbody tr:hover{background:#2a3b54}
+  td.name{font-weight:600}
+  .tablewrap{max-height:64vh;overflow:auto;border:1px solid var(--line);border-radius:10px}
+  .pos{color:var(--up)} .neg{color:var(--down)}
+  .d{font-size:11px;margin-left:5px}
+  .tag{font-size:11px;padding:2px 7px;border-radius:8px;font-weight:700}
+  .tag.신규{background:rgba(245,158,11,.18);color:var(--new)}
+  .tag.증가{background:rgba(34,197,94,.16);color:var(--up)}
+  .tag.감소{background:rgba(239,68,68,.16);color:var(--down)}
+  .tag.유지{background:#33415544;color:var(--muted)}
+  .tag.제외{background:#33415544;color:var(--muted)}
+  .summary{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 4px}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:120px}
+  .kpi .v{font-size:18px;font-weight:700}
+  .kpi .k{font-size:11px;color:var(--muted)}
+  .muted{color:var(--muted)} .hint{color:var(--muted);font-size:12px}
+  h2{font-size:15px;margin:0 0 10px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:4px 6px 4px 12px;font-size:13px}
+  .chip b{font-weight:600}
+  .chip .code{color:var(--muted);font-size:11px}
+  .chip .x{cursor:pointer;color:var(--muted);background:#0b1626;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;flex:none}
+  .sortind{color:var(--accent);font-size:11px;margin-left:3px}
+  th.active{color:var(--accent)}
+  table.etfcmp{table-layout:fixed}
+  table.etfcmp th,table.etfcmp td{white-space:normal;text-align:center;word-break:break-all;vertical-align:middle;line-height:1.35}
+  table.etfcmp th:first-child,table.etfcmp td:first-child{width:130px}
+  table.etfcmp td .muted{display:block;margin-top:1px}
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 개별종목 보유 ETF</h1>
+  <div class="ctrl"><label>비교시점<span class="sub">이전</span></label><select id="cmpSel"></select></div>
+  <span class="arrow" aria-hidden="true">→</span>
+  <div class="ctrl"><label>분석일<span class="sub">현재</span></label><select id="baseSel"></select></div>
+  <span class="badge" id="genInfo"></span>
+</header>
+<main>
+  <div class="tabs" id="maintabs">
+    <div class="tab active" data-tab="stock">개별종목 조회</div>
+    <div class="tab" data-tab="market">시장 전체</div>
+    <div class="tab" data-tab="etf">ETF별 비교</div>
+  </div>
+
+  <!-- 1. 개별종목 조회 -->
+  <section id="panel-stock">
+    <div class="card">
+      <h2>🔎 종목을 입력하면 그 종목을 보유한 ETF가 나열됩니다</h2>
+      <div class="row">
+        <input id="q" list="stocklist" placeholder="종목코드(005930) 또는 종목명" style="min-width:260px">
+        <datalist id="stocklist"></datalist>
+        <button onclick="doLookup()">조회</button>
+        <span class="hint" id="lkHint"></span>
+      </div>
+      <div id="lkSummary" class="summary"></div>
+      <div id="lkTableWrap" class="tablewrap" style="display:none;margin-top:10px"></div>
+    </div>
+  </section>
+
+  <!-- 2. 시장 전체 -->
+  <section id="panel-market" style="display:none">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <input id="mFilter" placeholder="종목 검색(이름/코드)" style="min-width:200px" oninput="renderMarket()">
+          <span class="hint">열 머리글을 클릭하면 그 기준으로 정렬됩니다</span>
+        </div>
+        <div class="ctrl"><label class="muted">표시</label>
+          <select id="topSel" onchange="renderMarket()">
+            <option value="50">상위 50</option><option value="100" selected>상위 100</option><option value="0">전체</option>
+          </select>
+        </div>
+      </div>
+      <div class="tablewrap" style="margin-top:10px"><table id="marketTable"></table></div>
+    </div>
+  </section>
+
+  <!-- 3. ETF별 비교 -->
+  <section id="panel-etf" style="display:none">
+    <div class="card">
+      <h2>📦 ETF 2~5개를 입력해 AUM·보유종목 비중을 비교</h2>
+      <div class="row">
+        <input id="etfInput" list="etflist" placeholder="ETF명 또는 코드 (예: KODEX 200)" style="min-width:280px">
+        <datalist id="etflist"></datalist>
+        <button onclick="addEtf()">추가</button>
+        <span class="hint">최대 5개</span>
+      </div>
+      <div id="etfChips" class="row" style="margin-top:10px"></div>
+      <div id="etfAum" style="margin-top:14px"></div>
+      <div id="etfMatrix" class="tablewrap" style="margin-top:12px;display:none"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const SAMPLE = {
+  generated:"샘플 데이터 (실제 데이터는 크롤러가 생성한 data.json)",
+  dates:["20251230","20260624"],
+  stocks:{
+    "20251230":{"005930":{name:"삼성전자",mcap:4200000,val:145000,n:168},"000660":{name:"SK하이닉스",mcap:1600000,val:108000,n:159},
+      "373220":{name:"LG에너지솔루션",mcap:900000,val:42000,n:120},"035420":{name:"NAVER",mcap:330000,val:21000,n:140},"005380":{name:"현대차",mcap:520000,val:31000,n:130}},
+    "20260624":{"005930":{name:"삼성전자",mcap:4600000,val:152000,n:184},"000660":{name:"SK하이닉스",mcap:2300000,val:165000,n:218},
+      "373220":{name:"LG에너지솔루션",mcap:1050000,val:55000,n:138},"035420":{name:"NAVER",mcap:360000,val:23500,n:150},"005380":{name:"현대차",mcap:540000,val:30500,n:128}}
+  },
+  detail:{
+    "20251230":{
+      "000660":[{etf:"091160",name:"KODEX 반도체",aum:9000,w:25.1,val:2259},{etf:"069500",name:"KODEX 200",aum:60000,w:5.2,val:3120}],
+      "005930":[{etf:"069500",name:"KODEX 200",aum:60000,w:29.5,val:17700}],
+      "035420":[{etf:"069500",name:"KODEX 200",aum:60000,w:2.8,val:1680}]
+    },
+    "20260624":{
+      "000660":[{etf:"0190G0",name:"KODEX 반도체타겟위클리커버드콜",aum:1200,w:43.8,val:525},{etf:"091160",name:"KODEX 반도체",aum:12000,w:41.5,val:4980},{etf:"069500",name:"KODEX 200",aum:64000,w:5.7,val:3648},{etf:"488210",name:"KIWOOM K-반도체",aum:800,w:37.6,val:301}],
+      "005930":[{etf:"069500",name:"KODEX 200",aum:64000,w:30.2,val:19328},{etf:"091160",name:"KODEX 반도체",aum:12000,w:8.0,val:960}],
+      "035420":[{etf:"069500",name:"KODEX 200",aum:64000,w:2.6,val:1664}],
+      "373220":[{etf:"069500",name:"KODEX 200",aum:64000,w:3.1,val:1984}]
+    }
+  }
+};
+
+let DATA=SAMPLE, activeTab="stock", sortKey="wCur", sortDir=-1, etfSel=[];
+let etfMeta={}, etfHold={};  // [date][etf]={name,aum}  /  [date][etf]={stock:{w,val}}
+
+const won=v=>(v==null||isNaN(v))?"-":Math.round(v).toLocaleString();
+const pct=v=>(v==null||isNaN(v))?"-":(+v).toFixed(2);
+const sCls=v=>v>0?"pos":(v<0?"neg":"");
+const sTxt=(v,f)=>(v>0?"+":"")+(f==="pct"?pct(v):won(v));
+const fmtDate=d=>d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`:d;
+const sname=(date,code)=>((DATA.stocks[date]||{})[code]||{}).name||code;
+
+function buildEtfIndexForDate(date){
+  etfMeta[date]={}; etfHold[date]={};
+  const det=(DATA.detail||{})[date]||{};
+  for(const stock in det){
+    for(const e of det[stock]){
+      etfMeta[date][e.etf]={name:e.name,aum:e.aum};
+      (etfHold[date][e.etf]=etfHold[date][e.etf]||{})[stock]={w:e.w,val:e.val};
+    }
+  }
+}
+async function ensureDetail(date){
+  DATA.detail=DATA.detail||{};
+  if(DATA.detail[date]){ if(!etfMeta[date])buildEtfIndexForDate(date); return; }
+  try{ const r=await fetch(`detail_${date}.json`); DATA.detail[date]=r.ok?await r.json():{}; }
+  catch(e){ DATA.detail[date]={}; }
+  buildEtfIndexForDate(date);
+}
+async function refreshData(){
+  const g=DATA.generated||"";
+  genInfo.textContent=g+" · 불러오는 중…";
+  await ensureDetail(baseSel.value); await ensureDetail(cmpSel.value);
+  genInfo.textContent=g;
+  refreshLists(); renderAll();
+}
+
+function init(){
+  const ds=[...DATA.dates].sort();
+  const fill=(sel,v)=>{sel.innerHTML=ds.map(d=>`<option value="${d}">${fmtDate(d)}</option>`).join("");sel.value=v;};
+  fill(baseSel,ds[ds.length-1]); fill(cmpSel,ds[0]);
+  genInfo.textContent=DATA.generated||"";
+  baseSel.onchange=cmpSel.onchange=refreshData;
+  maintabs.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+    activeTab=t.dataset.tab;
+    maintabs.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===t));
+    document.getElementById("panel-stock").style.display=activeTab==="stock"?"":"none";
+    document.getElementById("panel-market").style.display=activeTab==="market"?"":"none";
+    document.getElementById("panel-etf").style.display=activeTab==="etf"?"":"none";
+    renderAll();
+  });
+  q.addEventListener("keydown",e=>{if(e.key==="Enter")doLookup();});
+  etfInput.addEventListener("keydown",e=>{if(e.key==="Enter")addEtf();});
+  refreshData();
+}
+function refreshLists(){
+  const base=baseSel.value;
+  stocklist.innerHTML=Object.keys(DATA.stocks[base]||{}).map(c=>`<option value="${DATA.stocks[base][c].name} (${c})">`).join("");
+  etflist.innerHTML=Object.keys(etfMeta[base]||{}).map(e=>`<option value="${etfMeta[base][e].name} (${e})">`).join("");
+}
+function renderAll(){ if(activeTab==="market")renderMarket(); else if(activeTab==="etf")renderEtf(); }
+
+function buildFull(){
+  const base=baseSel.value,cmp=cmpSel.value;
+  const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
+  const codes=new Set([...Object.keys(sb),...Object.keys(sc)]);
+  const rows=[];
+  codes.forEach(code=>{
+    const b=sb[code],c=sc[code];
+    const mcapCur=b?b.mcap:0,valCur=b?b.val:0,mcapCmp=c?c.mcap:0,valCmp=c?c.val:0;
+    const wCur=mcapCur>0?valCur/mcapCur*100:0,wCmp=mcapCmp>0?valCmp/mcapCmp*100:0;
+    rows.push({code,name:(b||c).name,mcapCur,valCur,nCur:b?b.n:0,valCmp,wCur,wCmp,dW:wCur-wCmp,dVal:valCur-valCmp});
+  });
+  return rows;
+}
+
+function renderMarket(){
+  const bd=fmtDate(baseSel.value),cd=fmtDate(cmpSel.value);
+  const cols=[
+    {k:"code",t:"코드",cls:"l"},{k:"name",t:"종목명",cls:"l name"},
+    {k:"wCur",t:`편입%<br><span class="muted">${bd}</span>`,f:"pct"},
+    {k:"wCmp",t:`편입%<br><span class="muted">${cd}</span>`,f:"pct"},
+    {k:"dW",t:"비중변화<br>(%p)",f:"pctsign"},
+    {k:"valCur",t:`보유액(억)<br><span class="muted">${bd}</span>`,f:"won"},
+    {k:"valCmp",t:`보유액(억)<br><span class="muted">${cd}</span>`,f:"won"},
+    {k:"dVal",t:"증감<br>(억)",f:"wonsign"},
+    {k:"mcapCur",t:"시총(억)",f:"won"},{k:"nCur",t:"보유<br>ETF수",f:"int"}
+  ];
+  let rows=buildFull();
+  const fv=(mFilter.value||"").trim().toLowerCase();
+  if(fv)rows=rows.filter(r=>r.name.toLowerCase().includes(fv)||r.code.includes(fv));
+  rows.sort((a,b)=>{let x=a[sortKey],y=b[sortKey];
+    if(typeof x==="string"||typeof y==="string")return sortDir<0?String(y).localeCompare(String(x)):String(x).localeCompare(String(y));
+    return sortDir<0?y-x:x-y;});
+  const top=+topSel.value; if(top>0)rows=rows.slice(0,top);
+  const ind=sortDir<0?"▼":"▲";
+  let h="<thead><tr><th class='l'>#</th>"+cols.map(c=>{
+    const act=c.k===sortKey; return `<th class="${c.cls||''}${act?' active':''}" data-k="${c.k}">${c.t}${act?`<span class="sortind">${ind}</span>`:""}</th>`;
+  }).join("")+"</tr></thead><tbody>";
+  rows.forEach((row,i)=>{
+    h+=`<tr><td class='l muted'>${i+1}</td>`+cols.map(c=>{
+      let v=row[c.k];
+      if(c.f==="pct")return `<td>${pct(v)}</td>`;
+      if(c.f==="won")return `<td>${won(v)}</td>`;
+      if(c.f==="int")return `<td>${v||0}</td>`;
+      if(c.f==="pctsign")return `<td class="${sCls(v)}">${sTxt(v,"pct")}</td>`;
+      if(c.f==="wonsign")return `<td class="${sCls(v)}">${sTxt(v,"won")}</td>`;
+      return `<td class="${c.cls||''}">${v}</td>`;
+    }).join("")+"</tr>";
+  });
+  marketTable.innerHTML=h+"</tbody>";
+  marketTable.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if(sortKey===k)sortDir=-sortDir; else{sortKey=k;sortDir=-1;} renderMarket();
+  });
+}
+
+function resolveCode(qstr){
+  qstr=(qstr||"").trim(); if(!qstr)return null;
+  const m=qstr.match(/\((\d{6})\)/); if(m)return m[1];
+  if(/^\d{6}$/.test(qstr))return qstr;
+  const sb=DATA.stocks[baseSel.value]||{};
+  for(const c in sb)if(sb[c].name===qstr)return c;
+  for(const c in sb)if(sb[c].name.includes(qstr))return c;
+  return /^\d+$/.test(qstr)?qstr.padStart(6,"0"):null;
+}
+async function doLookup(){
+  const base=baseSel.value,cmp=cmpSel.value,bd=fmtDate(base),cd=fmtDate(cmp);
+  await ensureDetail(base); await ensureDetail(cmp);
+  const code=resolveCode(q.value);
+  const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
+  if(!code||!(sb[code]||sc[code])){lkHint.textContent="해당 종목을 찾을 수 없습니다.";lkSummary.innerHTML="";lkTableWrap.style.display="none";return;}
+  const b=sb[code],c=sc[code];
+  const wCur=b&&b.mcap?b.val/b.mcap*100:0,wCmp=c&&c.mcap?c.val/c.mcap*100:0;
+  lkHint.textContent="";
+  lkSummary.innerHTML=`
+    <div class="kpi"><div class="v">${(b||c).name}</div><div class="k">${code}</div></div>
+    <div class="kpi"><div class="v">${pct(wCur)}%</div><div class="k">편입비중 · ${bd}</div></div>
+    <div class="kpi"><div class="v ${sCls(wCur-wCmp)}">${sTxt(wCur-wCmp,'pct')}%p</div><div class="k">${cd} 대비</div></div>
+    <div class="kpi"><div class="v">${won(b?b.val:0)}억</div><div class="k">ETF 보유액 · ${bd}</div></div>
+    <div class="kpi"><div class="v">${b?b.n:0}개</div><div class="k">보유 ETF 수</div></div>`;
+  const db=(DATA.detail[base]||{})[code]||[],dc=(DATA.detail[cmp]||{})[code]||[];
+  const map={};
+  db.forEach(e=>map[e.etf]={etf:e.etf,name:e.name,aum:e.aum,wCur:e.w,valCur:e.val,wCmp:0,valCmp:0});
+  dc.forEach(e=>{map[e.etf]=map[e.etf]||{etf:e.etf,name:e.name,aum:e.aum,wCur:0,valCur:0};map[e.etf].wCmp=e.w;map[e.etf].valCmp=e.val;if(!map[e.etf].aum)map[e.etf].aum=e.aum;});
+  let arr=Object.values(map).map(e=>{const dV=e.valCur-e.valCmp;
+    let st=e.valCmp<=0&&e.valCur>0?"신규":(e.valCur<=0&&e.valCmp>0?"제외":(dV>0?"증가":(dV<0?"감소":"유지")));
+    return {...e,dVal:dV,status:st};}).sort((a,b)=>b.valCur-a.valCur);
+  if(arr.length===0){lkTableWrap.innerHTML=`<div style="padding:14px" class="muted">이 종목의 ETF 상세 데이터가 없습니다. (샘플엔 일부 종목만 포함)</div>`;lkTableWrap.style.display="block";return;}
+  let h=`<table><thead><tr><th class="l">#</th><th class="l">ETF코드</th><th class="l">ETF명</th><th>AUM(억)</th>
+    <th>비중%<br><span class="muted">${bd}</span></th><th>보유(억)<br><span class="muted">${bd}</span></th>
+    <th>비중%<br><span class="muted">${cd}</span></th><th>보유(억)<br><span class="muted">${cd}</span></th>
+    <th>증감(억)</th><th>상태</th></tr></thead><tbody>`;
+  arr.forEach((e,i)=>{h+=`<tr><td class="l muted">${i+1}</td><td class="l">${e.etf}</td><td class="l name">${e.name}</td>
+    <td>${won(e.aum)}</td><td>${pct(e.wCur)}</td><td>${won(e.valCur)}</td><td>${pct(e.wCmp)}</td><td>${won(e.valCmp)}</td>
+    <td class="${sCls(e.dVal)}">${sTxt(e.dVal,'won')}</td><td class="l"><span class="tag ${e.status}">${e.status}</span></td></tr>`;});
+  lkTableWrap.innerHTML=h+"</tbody>"; lkTableWrap.style.display="block";
+}
+
+function resolveEtf(qstr){
+  qstr=(qstr||"").trim(); if(!qstr)return null;
+  const m=qstr.match(/\((\w{6})\)/); if(m)return m[1];
+  const meta=etfMeta[baseSel.value]||{};
+  if(meta[qstr])return qstr;
+  for(const e in meta)if(meta[e].name===qstr)return e;
+  for(const e in meta)if(meta[e].name.includes(qstr))return e;
+  return null;
+}
+function addEtf(){
+  const e=resolveEtf(etfInput.value);
+  if(!e){etfInput.value="";return;}
+  if(!etfSel.includes(e)&&etfSel.length<5)etfSel.push(e);
+  etfInput.value=""; renderEtf();
+}
+function removeEtf(e){etfSel=etfSel.filter(x=>x!==e);renderEtf();}
+function renderEtf(){
+  const base=baseSel.value,cmp=cmpSel.value,bd=fmtDate(base),cd=fmtDate(cmp);
+  etfMeta[base]=etfMeta[base]||{};etfMeta[cmp]=etfMeta[cmp]||{};etfHold[base]=etfHold[base]||{};etfHold[cmp]=etfHold[cmp]||{};
+  const nameOf=e=>((etfMeta[base][e]||etfMeta[cmp][e]||{}).name)||e;
+  etfChips.innerHTML=etfSel.map(e=>`<span class="chip"><b>${nameOf(e)}</b><span class="code">${e}</span><span class="x" onclick="removeEtf('${e}')">×</span></span>`).join("")
+    ||`<span class="hint">위에서 ETF를 추가하세요.</span>`;
+  if(etfSel.length===0){etfAum.innerHTML="";etfMatrix.style.display="none";return;}
+  etfAum.innerHTML=`<div class="hint">셀 = 분석일(${bd}) 비중%·보유액(억) / 작은 숫자 = ${cd} 대비 변화</div>`;
+  const stocks=new Set();
+  etfSel.forEach(e=>{Object.keys(etfHold[base][e]||{}).forEach(s=>stocks.add(s));Object.keys(etfHold[cmp][e]||{}).forEach(s=>stocks.add(s));});
+  const score=s=>etfSel.reduce((t,e)=>t+(((etfHold[base][e]||{})[s]||{}).w||0),0);
+  const rows=[...stocks].sort((x,y)=>score(y)-score(x)).slice(0,80);
+  let h=`<table class="etfcmp"><thead><tr><th>종목 \\ ETF</th>`+etfSel.map(e=>`<th class="r">${nameOf(e)}<br><span class="muted">${e}</span></th>`).join("")+`</tr></thead><tbody>`;
+  h+=`<tr style="background:#22314a"><td class="l name">AUM(억)</td>`+etfSel.map(e=>{
+      const ab=(etfMeta[base][e]||{}).aum||0, ac=(etfMeta[cmp][e]||{}).aum||0, g=ac>0?(ab-ac)/ac*100:0;
+      return `<td><b>${won(ab)}</b>${ac>0?`<span class="d ${sCls(g)}">${sTxt(g,'pct')}%</span>`:''}</td>`;
+    }).join("")+`</tr>`;
+  rows.forEach(s=>{
+    h+=`<tr><td class="l">${sname(base,s)||sname(cmp,s)} <span class="muted">${s}</span></td>`+etfSel.map(e=>{
+        const hb=(etfHold[base][e]||{})[s], hc=(etfHold[cmp][e]||{})[s];
+        if(!hb&&!hc)return `<td class="muted">·</td>`;
+        const wc=hb?hb.w:0, wp=hc?hc.w:0, d=wc-wp, vc=hb?hb.val:0;
+        return `<td><div>${pct(wc)}%<span class="d ${sCls(d)}">${sTxt(d,'pct')}</span></div><div class="muted" style="font-size:11px">${won(vc)}억</div></td>`;
+      }).join("")+`</tr>`;
+  });
+  etfMatrix.innerHTML=h+`</tbody></table>`; etfMatrix.style.display="block";
+}
+
+fetch("data.json").then(r=>{if(!r.ok)throw 0;return r.json();}).then(j=>{DATA=j;DATA.detail=DATA.detail||{};init();}).catch(()=>{DATA=SAMPLE;init();});
+</script>
+</body>
+</html>

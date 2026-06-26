@@ -1,0 +1,671 @@
+# -*- coding: utf-8 -*-
+"""
+개별종목 보유 ETF 분석기  (병렬 크롤링 버전)
+============================================================
+국내 상장 ETF 전체의 PDF(구성종목)를 받아, 각 개별 상장주식이
+ETF들에 의해 얼마나 보유되고 있는지를 집계한다.
+
+산출물(엑셀):
+  1_시총대비편입비중 : 시총 대비 ETF 편입 비중이 큰 종목
+  2_편입급증         : 비교 기준일 대비 편입 비중이 늘어난 종목
+  3_조회             : 종목코드/종목명을 입력하면 편입비중이 자동으로 뜸
+  4_전체데이터       : 전 종목 집계 결과(조회 시트의 데이터 원본)
+
+방법론
+------
+- 모든 ETF PDF에서 "실제 상장 개별주식"인 구성종목만 추림
+  (채권/선물/현금/타ETF는 시총 유니버스에 없어 자동 제외, 혼합형 개별종목은 포함).
+- 종목별 ETF 보유액 = Σ( ETF 순자산(NAV×상장좌수) × 구성비중 )
+- 편입비중(%) = 종목별 ETF 보유액 합 / 시가총액 × 100
+
+사용법: README.md 참고. (KRX 로그인 필요 - krx_계정.txt)
+"""
+
+import os
+import sys
+import json
+import time
+import warnings
+import datetime as dt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+warnings.filterwarnings("ignore")  # pykrx 내부의 무해한 pandas 경고 숨김
+AUTO = "--auto" in sys.argv  # 무인 실행(스케줄러): 날짜 안 묻고 기본값, 끝에 멈추지 않음
+
+import pandas as pd
+from tqdm import tqdm
+
+# ── KRX 로그인 (2025-12-27 개편 이후 KRX 데이터는 로그인 필수) ──────────
+_ACCOUNT_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "krx_계정.txt")
+if not (os.environ.get("KRX_ID") and os.environ.get("KRX_PW")):
+    if os.path.exists(_ACCOUNT_FILE):
+        _lines = [ln.strip() for ln in open(_ACCOUNT_FILE, encoding="utf-8")
+                  if ln.strip() and not ln.strip().startswith("#")]
+        if len(_lines) >= 2 and "여기에" not in _lines[0]:
+            os.environ["KRX_ID"] = _lines[0]
+            os.environ["KRX_PW"] = _lines[1]
+KRX_LOGGED_IN = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
+
+from pykrx import stock
+from pykrx.website.krx.etx.core import 전종목시세_ETF
+
+# ============================================================
+# CONFIG  (여기만 바꾸면 됨)
+# ============================================================
+
+BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
+COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
+
+WORKERS = 16       # 동시 요청 수. 막힘/세션만료 잦으면 8~10으로 낮추세요.
+RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
+TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
+SLEEP = 0.0        # 각 요청 후 추가 대기(초). 보통 0으로 충분.
+ASK_DATES = True   # 실행 시 기준일/비교일을 물어볼지. False면 위 값 그대로 사용.
+
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(OUTPUT_DIR, "cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+# ============================================================
+# 유틸 / 로그인
+# ============================================================
+
+def _to_num(s):
+    if isinstance(s, str):
+        s = s.replace(",", "").strip()
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def resolve_base_date():
+    if BASE_DATE:
+        return BASE_DATE
+    try:
+        from pykrx.stock import get_nearest_business_day_in_a_week
+        return get_nearest_business_day_in_a_week()
+    except Exception:
+        return dt.date.today().strftime("%Y%m%d")
+
+
+def _valid_date(s):
+    s = s.strip()
+    return s.isdigit() and len(s) == 8
+
+
+def ask_dates():
+    """실행 시 기준일/비교일을 입력받는다. 엔터=기본값."""
+    base_default = BASE_DATE if BASE_DATE else resolve_base_date()
+    cmp_default = COMPARE_DATE
+    if not ASK_DATES or AUTO:
+        return base_default, cmp_default
+    print("\n날짜를 입력하세요 (YYYYMMDD, 그냥 엔터치면 기본값 사용)")
+    try:
+        b = input(f"  기준일(분석 시점) [엔터={base_default}]: ").strip()
+        c = input(f"  비교 기준일       [엔터={cmp_default}]: ").strip()
+    except EOFError:
+        return base_default, cmp_default
+    base = b if _valid_date(b) else base_default
+    cmp_ = c if _valid_date(c) else cmp_default
+    if b and not _valid_date(b):
+        print(f"  (기준일 형식이 이상해서 {base} 로 진행)")
+    if c and not _valid_date(c):
+        print(f"  (비교 기준일 형식이 이상해서 {cmp_} 로 진행)")
+    return base, cmp_
+
+
+def ensure_krx_login():
+    if KRX_LOGGED_IN:
+        return True
+    if not os.path.exists(_ACCOUNT_FILE):
+        with open(_ACCOUNT_FILE, "w", encoding="utf-8") as f:
+            f.write("# KRX 로그인 정보 파일\n")
+            f.write("# data.krx.co.kr 에서 무료 회원가입 후, 아래 두 줄을\n")
+            f.write("# 본인 아이디/비밀번호로 바꿔 저장하세요. (# 줄은 무시)\n")
+            f.write("여기에_KRX_아이디\n")
+            f.write("여기에_KRX_비밀번호\n")
+    print("\n" + "=" * 56)
+    print(" KRX 로그인 정보가 없습니다.")
+    print(" 1) data.krx.co.kr 에서 (무료) 회원가입")
+    print(" 2) 같은 폴더의 'krx_계정.txt' 1줄=아이디, 2줄=비밀번호 저장")
+    print(" 3) 다시 실행")
+    print("=" * 56)
+    return False
+
+
+# ============================================================
+# 데이터 수집
+# ============================================================
+
+def get_market_cap(date):
+    df = stock.get_market_cap_by_ticker(date, market="ALL", alternative=True)
+    return df[df["시가총액"] > 0]
+
+
+def get_etf_meta(date):
+    """ETF별 (순자산 dict, 이름 dict)을 한 번의 호출로 반환."""
+    raw = 전종목시세_ETF().fetch(date)
+    sizes, names = {}, {}
+    if raw is None or raw.empty:
+        return sizes, names
+    for _, r in raw.iterrows():
+        tk = str(r.get("ISU_SRT_CD", "")).zfill(6)
+        aum = _to_num(r.get("NAV")) * _to_num(r.get("LIST_SHRS"))
+        if aum <= 0:
+            aum = _to_num(r.get("MKTCAP"))
+        sizes[tk] = aum
+        nm = r.get("ISU_ABBRV", tk)
+        names[tk] = nm if isinstance(nm, str) and nm else tk
+    return sizes, names
+
+
+def get_etf_sizes(date):
+    """ETF별 순자산(원). (종목검증.py 호환)"""
+    return get_etf_meta(date)[0]
+
+
+def _fetch_pdf(etf, date):
+    """PDF 1건 조회. 빈 응답/오류 모두 재시도(세션 만료 대비). (etf, DataFrame|None)."""
+    for i in range(RETRIES + 1):
+        try:
+            pdf = stock.get_etf_portfolio_deposit_file(etf, date)
+            if pdf is not None and not pdf.empty and "비중" in pdf.columns:
+                if SLEEP:
+                    time.sleep(SLEEP)
+                return etf, pdf
+            # 빈 응답: 합성형일 수도, 세션만료로 인한 일시 빈응답일 수도 →
+            # 마지막 시도까지 비어있으면 그때 None 처리(=진짜 비어있음으로 간주)
+        except Exception:
+            pass
+        time.sleep(0.4 * (i + 1))
+    return etf, None
+
+
+def aggregate_for_date(date, mcap_index):
+    """종목별 ETF 보유액 병렬 집계 + ETF별 상세. 캐시: cache/agg_v4_{date}.pkl
+    반환: (agg_df, detail_df)"""
+    cache_path = os.path.join(CACHE_DIR, f"agg_v4_{date}.pkl")
+    if os.path.exists(cache_path):
+        print(f"  [cache] {date} 집계 캐시 사용")
+        d = pd.read_pickle(cache_path)
+        return d["agg"], d["detail"]
+
+    print(f"  ETF 목록/순자산 조회중... ({date})")
+    etf_list = stock.get_etf_ticker_list(date)
+    sizes, etf_names = get_etf_meta(date)
+    targets = [e for e in etf_list if sizes.get(e, 0.0) > 0]
+    print(f"  ETF {len(etf_list)}개 (보유액>0 {len(targets)}개). "
+          f"PDF 병렬 크롤링 시작 (worker={WORKERS}).")
+
+    hold_value, hold_count = {}, {}
+    detail_rows = []
+    fail = 0
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        futures = {ex.submit(_fetch_pdf, e, date): e for e in targets}
+        for fut in tqdm(as_completed(futures), total=len(futures),
+                        desc=f"  PDF {date}", unit="etf"):
+            etf, pdf = fut.result()
+            if pdf is None:
+                fail += 1
+                continue
+            aum = sizes[etf]
+            enm = etf_names.get(etf, etf)
+            total_amt = 0.0
+            for _, row in pdf.iterrows():
+                total_amt += _to_num(row.get("금액"))
+            for tk, row in pdf.iterrows():
+                tk = str(tk).zfill(6)
+                if tk not in mcap_index:
+                    continue
+                bijung = _to_num(row.get("비중"))
+                amt = _to_num(row.get("금액"))
+                if bijung > 0:
+                    w = bijung / 100.0
+                elif total_amt > 0 and amt > 0:
+                    w = amt / total_amt
+                else:
+                    w = 0.0
+                val = aum * w
+                hold_value[tk] = hold_value.get(tk, 0.0) + val
+                hold_count[tk] = hold_count.get(tk, 0) + 1
+                detail_rows.append((tk, etf, enm, w * 100.0, val, aum))
+
+    if fail:
+        print(f"  (PDF 비어있음/실패 {fail}건 - 합성·현금형 등, 무시)")
+
+    agg = pd.DataFrame({
+        "etf보유액": pd.Series(hold_value, dtype="float64"),
+        "보유etf수": pd.Series(hold_count, dtype="float64"),
+    }).fillna(0)
+    agg.index.name = "티커"
+    detail = pd.DataFrame(detail_rows,
+                          columns=["종목코드", "ETF코드", "ETF명", "비중", "보유액", "AUM"])
+    pd.to_pickle({"agg": agg, "detail": detail}, cache_path)
+    return agg, detail
+
+
+def build_name_map(tickers):
+    cache_path = os.path.join(CACHE_DIR, "names.json")
+    names = {}
+    if os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as f:
+            names = json.load(f)
+    missing = [t for t in tickers if t not in names]
+
+    def _nm(t):
+        try:
+            return t, stock.get_market_ticker_name(t)
+        except Exception:
+            return t, t
+
+    if missing:
+        with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            for t, nm in tqdm(ex.map(_nm, missing), total=len(missing),
+                              desc="  종목명", unit="stk"):
+                names[t] = nm
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(names, f, ensure_ascii=False)
+    return names
+
+
+# ============================================================
+# 분석 결합
+# ============================================================
+
+def make_ratio_table(agg, mcap, names):
+    joined = agg.join(mcap[["시가총액"]], how="inner")
+    tickers = list(joined.index)
+    return pd.DataFrame({
+        "티커": tickers,
+        "종목명": [names.get(t, t) for t in tickers],
+        "시가총액": joined["시가총액"].to_numpy(),
+        "etf보유액": joined["etf보유액"].to_numpy(),
+        "편입비중(%)": (joined["etf보유액"] / joined["시가총액"] * 100).to_numpy(),
+        "보유etf수": joined["보유etf수"].to_numpy(),
+    })
+
+
+def build_raw_full(t_base, t_cmp):
+    """현재/기준일 합친 전체 종목 테이블(원 단위 원본 + 정렬용 계산값)."""
+    import numpy as np
+    m = t_base.merge(t_cmp, on=["티커", "종목명"], how="outer",
+                     suffixes=("_현재", "_기준")).fillna(0)
+    out = pd.DataFrame({
+        "티커": m["티커"].astype(str).str.zfill(6),
+        "종목명": m["종목명"],
+        "시총_현재": m["시가총액_현재"].astype(float),
+        "etf_현재": m["etf보유액_현재"].astype(float),
+        "시총_기준": m["시가총액_기준"].astype(float),
+        "etf_기준": m["etf보유액_기준"].astype(float),
+        "보유ETF수": m["보유etf수_현재"].astype(int),
+    })
+    sc = out["시총_현재"].to_numpy(); ec = out["etf_현재"].to_numpy()
+    sk = out["시총_기준"].to_numpy(); ek = out["etf_기준"].to_numpy()
+    out["_편입현재"] = np.where(sc > 0, ec / np.where(sc > 0, sc, 1) * 100, 0.0)
+    out["_편입기준"] = np.where(sk > 0, ek / np.where(sk > 0, sk, 1) * 100, 0.0)
+    out["_변화"] = out["_편입현재"] - out["_편입기준"]
+    out["_보유증감"] = out["etf_현재"] - out["etf_기준"]
+    return out
+
+
+def merge_detail(det_base, det_cmp, names):
+    """ETF별 상세(현재/기준일)를 종목-ETF 단위로 합친다."""
+    import numpy as np
+    EOK = 1e8
+    b = det_base.rename(columns={"비중": "비중_현재", "보유액": "보유액_현재", "AUM": "AUM_현재"})
+    c = det_cmp.rename(columns={"비중": "비중_기준", "보유액": "보유액_기준", "AUM": "AUM_기준"})
+    m = pd.merge(b, c, on=["종목코드", "ETF코드"], how="outer", suffixes=("_b", "_c"))
+    m["ETF명"] = m["ETF명_b"].fillna(m["ETF명_c"])
+    for col in ["비중_현재", "보유액_현재", "AUM_현재", "비중_기준", "보유액_기준", "AUM_기준"]:
+        m[col] = m[col].fillna(0.0)
+    cur = m["보유액_현재"].to_numpy(); base = m["보유액_기준"].to_numpy()
+    status = np.where((base <= 0) & (cur > 0), "신규",
+             np.where((cur <= 0) & (base > 0), "제외(현재없음)",
+             np.where(cur > base, "증가", np.where(cur < base, "감소", "유지"))))
+    aum_cur = m["AUM_현재"].to_numpy(); aum_base = m["AUM_기준"].to_numpy()
+    aum = np.where(aum_cur > 0, aum_cur, aum_base)
+    codes = m["종목코드"].astype(str).str.zfill(6)
+    out = pd.DataFrame({
+        "종목코드": codes,
+        "종목명": [names.get(t, t) for t in codes],
+        "ETF코드": m["ETF코드"].astype(str).str.zfill(6),
+        "ETF명": m["ETF명"].fillna(""),
+        "ETF_AUM(억)": (aum / EOK).round(1),
+        "비중_현재(%)": m["비중_현재"].round(2),
+        "보유액_현재(억)": (m["보유액_현재"] / EOK).round(2),
+        "비중_기준일(%)": m["비중_기준"].round(2),
+        "보유액_기준일(억)": (m["보유액_기준"] / EOK).round(2),
+        "보유액증감(억)": ((m["보유액_현재"] - m["보유액_기준"]) / EOK).round(2),
+        "상태": status,
+    })
+    out = out.sort_values(["종목코드", "보유액_현재(억)"],
+                          ascending=[True, False]).reset_index(drop=True)
+    return out
+
+
+# ============================================================
+# 엑셀 출력 (값은 엑셀 수식으로 계산 / 2019·2020 호환)
+# ============================================================
+
+CALC_COLS = [
+    "티커", "종목명",
+    "시가총액_현재(원)", "ETF보유액_현재(원)",
+    "시가총액_기준일(원)", "ETF보유액_기준일(원)", "보유ETF수",
+    "시가총액_현재(억)", "ETF보유액_현재(억)", "ETF보유액_기준일(억)", "보유액증감(억)",
+    "편입비중_현재(%)", "편입비중_기준일(%)", "비중변화(%p)",
+]
+
+
+def write_excel(path, base_date, cmp_date, t_base, t_cmp, det_base, det_cmp, names):
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    full = build_raw_full(t_base, t_cmp)
+    detail = merge_detail(det_base, det_cmp, names)
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    hfill = PatternFill("solid", fgColor="1F4E78")
+    hfont = Font(bold=True, color="FFFFFF")
+
+    def style_header(ws, ncols):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(1, c)
+            cell.fill = hfill
+            cell.font = hfont
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.freeze_panes = "A2"
+
+    WON = ["시가총액_현재(원)", "ETF보유액_현재(원)", "시가총액_기준일(원)",
+           "ETF보유액_기준일(원)", "시가총액_현재(억)", "ETF보유액_현재(억)",
+           "ETF보유액_기준일(억)", "보유액증감(억)"]
+    PCT = ["편입비중_현재(%)", "편입비중_기준일(%)", "비중변화(%p)"]
+
+    def add_calc_sheet(name, df, with_rank):
+        ws = wb.create_sheet(name)
+        headers = (["순위"] if with_rank else []) + CALC_COLS
+        ws.append(headers)
+        L = {h: get_column_letter(i + 1) for i, h in enumerate(headers)}
+        cC, cD = L["시가총액_현재(원)"], L["ETF보유액_현재(원)"]
+        cE, cF = L["시가총액_기준일(원)"], L["ETF보유액_기준일(원)"]
+        cCur, cBase = L["편입비중_현재(%)"], L["편입비중_기준일(%)"]
+        tk = df["티커"].tolist(); nm = df["종목명"].tolist()
+        sc = df["시총_현재"].tolist(); ec = df["etf_현재"].tolist()
+        sk = df["시총_기준"].tolist(); ek = df["etf_기준"].tolist()
+        cnt = df["보유ETF수"].tolist()
+        for idx in range(len(df)):
+            i = idx + 2
+            vals = (["=ROW()-1"] if with_rank else [])
+            vals += [tk[idx], nm[idx], sc[idx], ec[idx], sk[idx], ek[idx], int(cnt[idx])]
+            vals += [
+                f"={cC}{i}/100000000", f"={cD}{i}/100000000", f"={cF}{i}/100000000",
+                f"=({cD}{i}-{cF}{i})/100000000",
+                f"=IF({cC}{i}>0,{cD}{i}/{cC}{i}*100,0)",
+                f"=IF({cE}{i}>0,{cF}{i}/{cE}{i}*100,0)",
+                f"={cCur}{i}-{cBase}{i}",
+            ]
+            ws.append(vals)
+        style_header(ws, len(headers))
+        for h in WON:
+            for r in range(2, ws.max_row + 1):
+                ws[f"{L[h]}{r}"].number_format = "#,##0"
+        for h in PCT:
+            for r in range(2, ws.max_row + 1):
+                ws[f"{L[h]}{r}"].number_format = "0.00"
+        for r in range(2, ws.max_row + 1):
+            ws[f"{L['티커']}{r}"].number_format = "@"
+        for i, h in enumerate(headers, 1):
+            ws.column_dimensions[get_column_letter(i)].width = min(max(len(h) + 2, 10), 20)
+        return ws
+
+    # 0_요약
+    ws0 = wb.create_sheet("0_요약")
+    for r in [["항목", "값"], ["기준일(현재)", base_date], ["비교 기준일", cmp_date],
+              ["분석 종목 수", len(full)],
+              ["생성 시각", dt.datetime.now().strftime("%Y-%m-%d %H:%M")],
+              ["방법론", "표의 %·억 값은 원본(원) 컬럼에서 엑셀 수식으로 계산됩니다."]]:
+        ws0.append(r)
+    style_header(ws0, 2)
+    ws0.column_dimensions["A"].width = 16
+    ws0.column_dimensions["B"].width = 46
+
+    def topN(df, key):
+        d = df.sort_values(key, ascending=False).reset_index(drop=True)
+        return d.head(TOP_N) if TOP_N else d
+
+    add_calc_sheet("1_시총대비편입비중상위", topN(full, "_편입현재"), True)
+    add_calc_sheet("2_편입비중급증상위", topN(full, "_변화"), True)
+    add_calc_sheet("3_ETF보유액상위", topN(full, "etf_현재"), True)
+    add_calc_sheet("4_ETF보유액급증상위", topN(full, "_보유증감"), True)
+    add_calc_sheet("6_전체데이터",
+                   full.sort_values("_편입현재", ascending=False).reset_index(drop=True),
+                   False)
+
+    Lf = {h: get_column_letter(i + 1) for i, h in enumerate(CALC_COLS)}
+    SH = "'6_전체데이터'"
+
+    # ---- 5_조회 (종목 → 요약 한 줄) ----
+    ws = wb.create_sheet("5_조회")
+    spec = [
+        ("종목코드", "티커", "@"), ("종목명", "종목명", None),
+        ("현재 편입비중(%)", "편입비중_현재(%)", "0.00"),
+        ("기준일 편입비중(%)", "편입비중_기준일(%)", "0.00"),
+        ("비중변화(%p)", "비중변화(%p)", "0.00"),
+        ("ETF보유액_현재(억)", "ETF보유액_현재(억)", "#,##0"),
+        ("ETF보유액_기준일(억)", "ETF보유액_기준일(억)", "#,##0"),
+        ("보유액증감(억)", "보유액증감(억)", "#,##0"),
+        ("시가총액(억)", "시가총액_현재(억)", "#,##0"),
+        ("보유ETF수", "보유ETF수", "0"),
+    ]
+    hdr = ["입력(코드/종목명)"] + [s[0] for s in spec]
+    ws.append(hdr)
+    ws.append(["← 노란 칸에 종목코드(예 005930) 나 종목명을 한 줄에 하나씩 입력"])
+    style_header(ws, len(hdr))
+    yellow = PatternFill("solid", fgColor="FFF2CC")
+    helper_col = get_column_letter(len(hdr) + 2)
+    for r in range(3, 43):
+        ws.cell(r, 1).fill = yellow
+        ws.cell(r, 1).number_format = "@"
+        ws[f"{helper_col}{r}"] = (
+            f'=IFERROR(MATCH($A{r},{SH}!${Lf["종목명"]}:${Lf["종목명"]},0),'
+            f'IFERROR(MATCH($A{r},{SH}!${Lf["티커"]}:${Lf["티커"]},0),'
+            f'IFERROR(MATCH(TEXT($A{r},"000000"),{SH}!${Lf["티커"]}:${Lf["티커"]},0),NA())))')
+        for j, (_, srccol, numfmt) in enumerate(spec):
+            col = get_column_letter(j + 2)
+            src = Lf[srccol]
+            fb = '"못 찾음"' if srccol == "티커" else '""'
+            ws[f"{col}{r}"] = (f'=IF($A{r}="","",'
+                               f'IFERROR(INDEX({SH}!${src}:${src},${helper_col}{r}),{fb}))')
+            if numfmt:
+                ws[f"{col}{r}"].number_format = numfmt
+    ws.column_dimensions[helper_col].hidden = True
+    ws.column_dimensions["A"].width = 18
+    for j in range(len(spec)):
+        ws.column_dimensions[get_column_letter(j + 2)].width = 16
+
+    # ---- 8_ETF상세 (종목별ETF조회의 데이터 원본) ----
+    DCOLS = ["종목코드", "종목명", "ETF코드", "ETF명", "ETF_AUM(억)",
+             "비중_현재(%)", "보유액_현재(억)", "비중_기준일(%)", "보유액_기준일(억)",
+             "보유액증감(억)", "상태"]
+    wsd = wb.create_sheet("8_ETF상세")
+    wsd.append(DCOLS)
+    arrs = {c: detail[c].tolist() for c in DCOLS}
+    for idx in range(len(detail)):
+        wsd.append([arrs[c][idx] for c in DCOLS])
+    style_header(wsd, len(DCOLS))
+    DL = {h: get_column_letter(i + 1) for i, h in enumerate(DCOLS)}
+    for r in range(2, wsd.max_row + 1):
+        wsd[f"{DL['종목코드']}{r}"].number_format = "@"
+        wsd[f"{DL['ETF코드']}{r}"].number_format = "@"
+        wsd[f"{DL['ETF_AUM(억)']}{r}"].number_format = "#,##0"
+        for h in ["비중_현재(%)", "보유액_현재(억)", "비중_기준일(%)",
+                  "보유액_기준일(억)", "보유액증감(억)"]:
+            wsd[f"{DL[h]}{r}"].number_format = "0.00"
+    for i, h in enumerate(DCOLS, 1):
+        wsd.column_dimensions[get_column_letter(i)].width = min(max(len(h) + 2, 10), 22)
+
+    # ---- 7_종목별ETF조회 (종목 → 그 종목 보유 ETF 전체 나열) ----
+    D = "'8_ETF상세'"
+    ws7 = wb.create_sheet("7_종목별ETF조회")
+    ws7["A1"] = "종목코드/종목명 →"
+    ws7["A1"].font = Font(bold=True)
+    ws7["B1"].fill = yellow
+    ws7["B1"].number_format = "@"
+    # 헬퍼: L1 해석된 코드 / M1 첫 행 / N1 개수
+    ws7["L1"] = (f'=IFERROR(INDEX({SH}!$A:$A,MATCH($B$1,{SH}!$B:$B,0)),'
+                 f'IFERROR(INDEX({SH}!$A:$A,MATCH($B$1,{SH}!$A:$A,0)),'
+                 f'IFERROR(INDEX({SH}!$A:$A,MATCH(TEXT($B$1,"000000"),{SH}!$A:$A,0)),"")))')
+    ws7["M1"] = f'=IFERROR(MATCH($L$1,{D}!${DL["종목코드"]}:${DL["종목코드"]},0),0)'
+    ws7["N1"] = f'=IF($L$1="",0,COUNTIF({D}!${DL["종목코드"]}:${DL["종목코드"]},$L$1))'
+    ws7["D1"] = '=IF($L$1="","종목을 입력하세요", "보유 ETF "&$N$1&"개")'
+    out_spec = [
+        ("ETF코드", DL["ETF코드"], "@"), ("ETF명", DL["ETF명"], None),
+        ("ETF AUM(억)", DL["ETF_AUM(억)"], "#,##0"),
+        ("현재 비중(%)", DL["비중_현재(%)"], "0.00"),
+        ("현재 보유액(억)", DL["보유액_현재(억)"], "0.00"),
+        ("기준일 비중(%)", DL["비중_기준일(%)"], "0.00"),
+        ("기준일 보유액(억)", DL["보유액_기준일(억)"], "0.00"),
+        ("보유액증감(억)", DL["보유액증감(억)"], "0.00"),
+        ("상태", DL["상태"], None),
+    ]
+    hrow = 3
+    ws7.append([])  # row2 빈 줄
+    ws7.cell(hrow, 1, "순위")
+    for j, (label, _, _) in enumerate(out_spec):
+        ws7.cell(hrow, j + 2, label)
+    for c in range(1, len(out_spec) + 2):
+        cell = ws7.cell(hrow, c)
+        cell.fill = hfill; cell.font = hfont
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws7.freeze_panes = f"A{hrow + 1}"
+    NSHOW = 320
+    for r in range(hrow + 1, hrow + 1 + NSHOW):
+        k = r - hrow  # 1부터
+        ws7.cell(r, 1).value = (f'=IF(AND($L$1<>"",{k}<=$N$1),{k},"")')
+        for j, (_, sc_, numfmt) in enumerate(out_spec):
+            col = get_column_letter(j + 2)
+            ws7[f"{col}{r}"] = (f'=IF(AND($L$1<>"",{k}<=$N$1),'
+                                f'INDEX({D}!${sc_}:${sc_},$M$1+{k}-1),"")')
+            if numfmt:
+                ws7[f"{col}{r}"].number_format = numfmt
+    for cc in ["L", "M", "N"]:
+        ws7.column_dimensions[cc].hidden = True
+    ws7.column_dimensions["A"].width = 6
+    ws7.column_dimensions["B"].width = 12
+    ws7.column_dimensions["C"].width = 30
+    for j in range(2, len(out_spec) + 1):
+        ws7.column_dimensions[get_column_letter(j + 2)].width = 15
+
+    order = ["0_요약", "1_시총대비편입비중상위", "2_편입비중급증상위",
+             "3_ETF보유액상위", "4_ETF보유액급증상위", "5_조회",
+             "7_종목별ETF조회", "6_전체데이터", "8_ETF상세"]
+    wb._sheets.sort(key=lambda x: order.index(x.title) if x.title in order else 99)
+    wb.save(path)
+
+
+def update_web_data(date, agg, mcap, detail, names):
+    """웹 뷰어용 데이터 출력.
+    - data.json : 모든 날짜의 '종목 집계'(가벼움) — 날짜를 누적 병합
+    - detail_<date>.json : 그 날짜의 'ETF별 상세'(무거움) — 날짜별 분리 저장
+    금액 단위는 억원."""
+    EOK = 1e8
+    mc = mcap["시가총액"]
+    stocks = {}
+    for code in agg.index:
+        if code not in mc.index:
+            continue
+        stocks[code] = {
+            "name": names.get(code, code),
+            "mcap": round(float(mc.loc[code]) / EOK),
+            "val": round(float(agg.loc[code, "etf보유액"]) / EOK),
+            "n": int(agg.loc[code, "보유etf수"]),
+        }
+    # data.json 병합
+    djson = os.path.join(OUTPUT_DIR, "data.json")
+    data = {"dates": [], "stocks": {}}
+    if os.path.exists(djson):
+        try:
+            data = json.load(open(djson, encoding="utf-8"))
+        except Exception:
+            data = {"dates": [], "stocks": {}}
+    data.pop("detail", None)   # 상세는 detail_<date>.json 로 분리(여기엔 안 넣음)
+    data.setdefault("stocks", {})[date] = stocks
+    data["dates"] = sorted(set(data.get("dates", [])) | {date})
+    data["generated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M") + " 갱신"
+    with open(djson, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+    # detail_<date>.json
+    codes = detail["종목코드"].tolist()
+    etfs = detail["ETF코드"].tolist()
+    enames = detail["ETF명"].tolist()
+    ws = detail["비중"].tolist()
+    vals = detail["보유액"].tolist()
+    aums = detail["AUM"].tolist()
+    det = {}
+    for i in range(len(detail)):
+        det.setdefault(codes[i], []).append({
+            "etf": etfs[i], "name": enames[i],
+            "aum": round(float(aums[i]) / EOK),
+            "w": round(float(ws[i]), 2),
+            "val": round(float(vals[i]) / EOK, 1),
+        })
+    for c in det:
+        det[c].sort(key=lambda x: -x["val"])
+    with open(os.path.join(OUTPUT_DIR, f"detail_{date}.json"), "w", encoding="utf-8") as f:
+        json.dump(det, f, ensure_ascii=False)
+
+
+# ============================================================
+# 메인
+# ============================================================
+
+def main():
+    if not ensure_krx_login():
+        return
+
+    base_date, cmp_date = ask_dates()
+    print(f"\n기준일: {base_date} / 비교 기준일: {cmp_date}\n")
+
+    print("[1/4] 시가총액 유니버스 로딩")
+    mcap_base = get_market_cap(base_date)
+    mcap_cmp = get_market_cap(cmp_date)
+
+    print("[2/4] 기준일(현재) ETF 집계")
+    agg_base, det_base = aggregate_for_date(base_date, set(mcap_base.index))
+    print("[3/4] 비교 기준일 ETF 집계")
+    agg_cmp, det_cmp = aggregate_for_date(cmp_date, set(mcap_cmp.index))
+
+    print("[4/4] 종목명 매핑 + 엑셀 생성")
+    all_tk = set(agg_base.index) | set(agg_cmp.index)
+    names = build_name_map(all_tk)
+    t_base = make_ratio_table(agg_base, mcap_base, names)
+    t_cmp = make_ratio_table(agg_cmp, mcap_cmp, names)
+
+    out_path = os.path.join(
+        OUTPUT_DIR, f"ETF편입분석_{base_date}_vs_{cmp_date}.xlsx")
+    write_excel(out_path, base_date, cmp_date, t_base, t_cmp, det_base, det_cmp, names)
+    print(f"\n완료(엑셀): {out_path}")
+
+    print("[웹] data.json / detail_*.json 갱신")
+    update_web_data(base_date, agg_base, mcap_base, det_base, names)
+    update_web_data(cmp_date, agg_cmp, mcap_cmp, det_cmp, names)
+    print("  웹 데이터 갱신 완료 (index.html 에서 사용)")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except ModuleNotFoundError as e:
+        print("\n[오류] 필요한 패키지가 없습니다:", e)
+        print("    pip install pykrx openpyxl pandas tqdm")
+    except Exception:
+        import traceback
+        print("\n[오류] 실행 중 문제가 발생했습니다. 아래 내용을 캡쳐해 알려주세요:\n")
+        traceback.print_exc()
+    if not AUTO:
+        input("\n끝났습니다. 이 창을 닫으려면 Enter 키를 누르세요...")
