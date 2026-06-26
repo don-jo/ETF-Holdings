@@ -15,6 +15,7 @@
   .ctrl label{color:#cfe3f5;font-size:12px}
   .sub{color:#9fc7e8;font-size:10px;margin-left:2px}
   .arrow{color:#cfe3f5;font-weight:700;font-size:18px;margin:0 -2px}
+  input[type=date]{color-scheme:dark;min-width:150px}
   select,input,button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px}
   button{cursor:pointer;background:var(--accent);color:#06283d;border:none;font-weight:600}
   button:hover{opacity:.9}
@@ -62,9 +63,9 @@
 <body>
 <header>
   <h1>📊 개별종목 보유 ETF</h1>
-  <div class="ctrl"><label>비교시점<span class="sub">이전</span></label><select id="cmpSel"></select></div>
+  <div class="ctrl"><label>비교시점<span class="sub">이전</span></label><input type="date" id="cmpSel"></div>
   <span class="arrow" aria-hidden="true">→</span>
-  <div class="ctrl"><label>분석일<span class="sub">현재</span></label><select id="baseSel"></select></div>
+  <div class="ctrl"><label>분석일<span class="sub">현재</span></label><input type="date" id="baseSel"></div>
   <span class="badge" id="genInfo"></span>
 </header>
 <main>
@@ -158,6 +159,17 @@ const sCls=v=>v>0?"pos":(v<0?"neg":"");
 const sTxt=(v,f)=>(v>0?"+":"")+(f==="pct"?pct(v):won(v));
 const fmtDate=d=>d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`:d;
 const sname=(date,code)=>((DATA.stocks[date]||{})[code]||{}).name||code;
+const dval=el=>(el.value||"").replaceAll("-","");
+const setDval=(el,d)=>{el.value=fmtDate(d);};
+const toDate=d=>new Date(+d.slice(0,4),+d.slice(4,6)-1,+d.slice(6,8));
+function nearestDate(d){
+  if(!d||DATA.dates.includes(d))return d||DATA.dates[DATA.dates.length-1];
+  const t=toDate(d).getTime();
+  let best=DATA.dates[0],bd=Infinity;
+  for(const x of DATA.dates){const f=Math.abs(toDate(x).getTime()-t);if(f<bd){bd=f;best=x;}}
+  return best;
+}
+function snap(el){const d=dval(el);const n=nearestDate(d);if(n!==d)setDval(el,n);}
 
 function buildEtfIndexForDate(date){
   etfMeta[date]={}; etfHold[date]={};
@@ -179,17 +191,19 @@ async function ensureDetail(date){
 async function refreshData(){
   const g=DATA.generated||"";
   genInfo.textContent=g+" · 불러오는 중…";
-  await ensureDetail(baseSel.value); await ensureDetail(cmpSel.value);
+  await ensureDetail(dval(baseSel)); await ensureDetail(dval(cmpSel));
   genInfo.textContent=g;
   refreshLists(); renderAll();
 }
 
 function init(){
   const ds=[...DATA.dates].sort();
-  const fill=(sel,v)=>{sel.innerHTML=ds.map(d=>`<option value="${d}">${fmtDate(d)}</option>`).join("");sel.value=v;};
-  fill(baseSel,ds[ds.length-1]); fill(cmpSel,ds[0]);
+  const lo=ds[0], hi=ds[ds.length-1];
+  [baseSel,cmpSel].forEach(el=>{el.min=fmtDate(lo);el.max=fmtDate(hi);});
+  setDval(baseSel,hi); setDval(cmpSel,lo);
   genInfo.textContent=DATA.generated||"";
-  baseSel.onchange=cmpSel.onchange=refreshData;
+  baseSel.onchange=()=>{snap(baseSel);refreshData();};
+  cmpSel.onchange=()=>{snap(cmpSel);refreshData();};
   maintabs.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
     activeTab=t.dataset.tab;
     maintabs.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===t));
@@ -203,14 +217,14 @@ function init(){
   refreshData();
 }
 function refreshLists(){
-  const base=baseSel.value;
+  const base=dval(baseSel);
   stocklist.innerHTML=Object.keys(DATA.stocks[base]||{}).map(c=>`<option value="${DATA.stocks[base][c].name} (${c})">`).join("");
   etflist.innerHTML=Object.keys(etfMeta[base]||{}).map(e=>`<option value="${etfMeta[base][e].name} (${e})">`).join("");
 }
 function renderAll(){ if(activeTab==="market")renderMarket(); else if(activeTab==="etf")renderEtf(); }
 
 function buildFull(){
-  const base=baseSel.value,cmp=cmpSel.value;
+  const base=dval(baseSel),cmp=dval(cmpSel);
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
   const codes=new Set([...Object.keys(sb),...Object.keys(sc)]);
   const rows=[];
@@ -224,7 +238,7 @@ function buildFull(){
 }
 
 function renderMarket(){
-  const bd=fmtDate(baseSel.value),cd=fmtDate(cmpSel.value);
+  const bd=fmtDate(dval(baseSel)),cd=fmtDate(dval(cmpSel));
   const cols=[
     {k:"code",t:"코드",cls:"l"},{k:"name",t:"종목명",cls:"l name"},
     {k:"wCur",t:`편입%<br><span class="muted">${bd}</span>`,f:"pct"},
@@ -267,13 +281,13 @@ function resolveCode(qstr){
   qstr=(qstr||"").trim(); if(!qstr)return null;
   const m=qstr.match(/\((\d{6})\)/); if(m)return m[1];
   if(/^\d{6}$/.test(qstr))return qstr;
-  const sb=DATA.stocks[baseSel.value]||{};
+  const sb=DATA.stocks[dval(baseSel)]||{};
   for(const c in sb)if(sb[c].name===qstr)return c;
   for(const c in sb)if(sb[c].name.includes(qstr))return c;
   return /^\d+$/.test(qstr)?qstr.padStart(6,"0"):null;
 }
 async function doLookup(){
-  const base=baseSel.value,cmp=cmpSel.value,bd=fmtDate(base),cd=fmtDate(cmp);
+  const base=dval(baseSel),cmp=dval(cmpSel),bd=fmtDate(base),cd=fmtDate(cmp);
   await ensureDetail(base); await ensureDetail(cmp);
   const code=resolveCode(q.value);
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
@@ -308,7 +322,7 @@ async function doLookup(){
 function resolveEtf(qstr){
   qstr=(qstr||"").trim(); if(!qstr)return null;
   const m=qstr.match(/\((\w{6})\)/); if(m)return m[1];
-  const meta=etfMeta[baseSel.value]||{};
+  const meta=etfMeta[dval(baseSel)]||{};
   if(meta[qstr])return qstr;
   for(const e in meta)if(meta[e].name===qstr)return e;
   for(const e in meta)if(meta[e].name.includes(qstr))return e;
@@ -322,7 +336,7 @@ function addEtf(){
 }
 function removeEtf(e){etfSel=etfSel.filter(x=>x!==e);renderEtf();}
 function renderEtf(){
-  const base=baseSel.value,cmp=cmpSel.value,bd=fmtDate(base),cd=fmtDate(cmp);
+  const base=dval(baseSel),cmp=dval(cmpSel),bd=fmtDate(base),cd=fmtDate(cmp);
   etfMeta[base]=etfMeta[base]||{};etfMeta[cmp]=etfMeta[cmp]||{};etfHold[base]=etfHold[base]||{};etfHold[cmp]=etfHold[cmp]||{};
   const nameOf=e=>((etfMeta[base][e]||etfMeta[cmp][e]||{}).name)||e;
   etfChips.innerHTML=etfSel.map(e=>`<span class="chip"><b>${nameOf(e)}</b><span class="code">${e}</span><span class="x" onclick="removeEtf('${e}')">×</span></span>`).join("")
