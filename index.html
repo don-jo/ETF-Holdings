@@ -16,6 +16,7 @@
   .sub{color:#9fc7e8;font-size:10px;margin-left:2px}
   .arrow{color:#cfe3f5;font-weight:700;font-size:18px;margin:0 -2px}
   input[type=date]{color-scheme:dark;min-width:150px}
+  #baseSel,#cmpSel{min-width:140px;cursor:pointer;text-align:center}
   select,input,button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px}
   button{cursor:pointer;background:var(--accent);color:#06283d;border:none;font-weight:600}
   button:hover{opacity:.9}
@@ -59,13 +60,15 @@
   table.etfcmp th:first-child,table.etfcmp td:first-child{width:130px}
   table.etfcmp td .muted{display:block;margin-top:1px}
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/themes/dark.css">
 </head>
 <body>
 <header>
   <h1>📊 개별종목 보유 ETF</h1>
-  <div class="ctrl"><label>비교시점<span class="sub">이전</span></label><input type="date" id="cmpSel"></div>
+  <div class="ctrl"><label>비교시점<span class="sub">이전</span></label><input type="text" id="cmpSel" placeholder="날짜 선택"></div>
   <span class="arrow" aria-hidden="true">→</span>
-  <div class="ctrl"><label>분석일<span class="sub">현재</span></label><input type="date" id="baseSel"></div>
+  <div class="ctrl"><label>분석일<span class="sub">현재</span></label><input type="text" id="baseSel" placeholder="날짜 선택"></div>
   <span class="badge" id="genInfo"></span>
 </header>
 <main>
@@ -125,6 +128,7 @@
   </section>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script>
 const SAMPLE = {
   generated:"샘플 데이터 (실제 데이터는 크롤러가 생성한 data.json)",
@@ -199,11 +203,19 @@ async function refreshData(){
 function init(){
   const ds=[...DATA.dates].sort();
   const lo=ds[0], hi=ds[ds.length-1];
-  [baseSel,cmpSel].forEach(el=>{el.min=fmtDate(lo);el.max=fmtDate(hi);});
-  setDval(baseSel,hi); setDval(cmpSel,lo);
+  const enableYMD=ds.map(fmtDate);   // 데이터 있는 날만 선택 가능
   genInfo.textContent=DATA.generated||"";
-  baseSel.onchange=()=>{snap(baseSel);refreshData();};
-  cmpSel.onchange=()=>{snap(cmpSel);refreshData();};
+  const mkPicker=(el,def)=>{
+    if(window.flatpickr){
+      flatpickr(el,{dateFormat:"Y-m-d",enable:enableYMD,defaultDate:fmtDate(def),
+        disableMobile:true,onChange:()=>refreshData()});
+    }else{   // CDN 못 불러오면 기본 달력 + 보정으로 폴백
+      el.type="date"; el.min=fmtDate(lo); el.max=fmtDate(hi); setDval(el,def);
+      el.onchange=()=>{snap(el);refreshData();};
+    }
+  };
+  mkPicker(cmpSel, lo);
+  mkPicker(baseSel, hi);
   maintabs.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
     activeTab=t.dataset.tab;
     maintabs.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===t));
