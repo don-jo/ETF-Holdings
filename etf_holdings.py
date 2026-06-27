@@ -32,6 +32,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings("ignore")  # pykrx 내부의 무해한 pandas 경고 숨김
 AUTO = "--auto" in sys.argv  # 무인 실행(스케줄러): 날짜 안 묻고 기본값, 끝에 멈추지 않음
 
+# --year 2026 / --year=2026 : 그 해 거래일 전체를 이어받기(배치) 모드로 수집
+YEAR = None
+for _i, _a in enumerate(sys.argv):
+    if _a == "--year" and _i + 1 < len(sys.argv):
+        YEAR = sys.argv[_i + 1]
+    elif _a.startswith("--year="):
+        YEAR = _a.split("=", 1)[1]
+
 import pandas as pd
 from tqdm import tqdm
 
@@ -63,6 +71,8 @@ TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
 SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
 ASK_DATES = True   # (현재 미사용) 호환용
 REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
+BATCH_PER_RUN = 3      # --year 모드: 한 번 실행에 받을 최대 날짜 수(로그인 1시간 만료 회피)
+FAIL_RATIO_LIMIT = 0.15  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
 MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
 
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -229,9 +239,14 @@ def _fetch_pdf(etf, date):
     return etf, None
 
 
+class ThrottledError(Exception):
+    """PDF 실패율이 너무 높음(=KRX throttle). 저장하지 않고 다음에 재시도."""
+    pass
+
+
 def aggregate_for_date(date, mcap_index):
-    """종목별 ETF 보유액 병렬 집계 + ETF별 상세. 캐시: cache/agg_v4_{date}.pkl
-    반환: (agg_df, detail_df)"""
+    """종목별 ETF 보유액 병렬 집계 + ETF별 상세. 캐시: cache/agg_v5_{date}.pkl
+    반환: (agg_df, detail_df). 실패율 높으면 ThrottledError."""
     cache_path = os.path.join(CACHE_DIR, f"agg_v5_{date}.pkl")
     if os.path.exists(cache_path):
         print(f"  [cache] {date} 집계 캐시 사용")
@@ -302,6 +317,13 @@ def aggregate_for_date(date, mcap_index):
 
     if fail:
         print(f"  (PDF 비어있음/실패 {fail}건 - 합성·현금형 등, 무시)")
+
+    # 실패율 가드: 너무 많이 실패했으면 throttle로 보고 '저장 안 함' → 다음에 재시도
+    fail_ratio = fail / max(1, len(targets))
+    if fail_ratio > FAIL_RATIO_LIMIT:
+        print(f"  ⚠️ 실패율 {fail_ratio:.0%} ({fail}/{len(targets)}) — throttle로 판단. "
+              f"이 날짜는 저장하지 않고 다음에 다시 받습니다.")
+        raise ThrottledError(date)
 
     agg = pd.DataFrame({
         "etf보유액": pd.Series(hold_value, dtype="float64"),
@@ -716,42 +738,109 @@ def _make_excel(base, store):
     print(f"  엑셀: {out}")
 
 
+def _is_done(date):
+    """그 날짜가 이미 받아졌는지(웹 detail 파일 존재 여부)."""
+    return os.path.exists(os.path.join(WEB_DIR, f"detail_{date}.json"))
+
+
+def trading_days_of_year(year):
+    """해당 연도의 실제 거래일 목록(YYYYMMDD). 최근 영업일까지만."""
+    y = int(year)
+    end = resolve_base_date()
+    if int(end[:4]) > y:
+        end = f"{y}1231"
+    try:
+        days = stock.get_previous_business_days(fromdate=f"{y}0101", todate=end)
+    except Exception as e:
+        print("  거래일 목록 조회 실패:", e)
+        return []
+    out = []
+    for d in days:
+        try:
+            out.append(d.strftime("%Y%m%d"))
+        except Exception:
+            out.append(str(d).replace("-", "")[:8])
+    return sorted(set(out))
+
+
+def _crawl_one(date):
+    """한 날짜 수집+웹저장. 성공 True / throttle·실패 False."""
+    mcap = get_market_cap(date)
+    if mcap.empty:
+        print(f"  WARN {date}: 시총 빈 응답(throttle/휴장). 이 날짜 보류.")
+        return False
+    try:
+        agg, detail = aggregate_for_date(date, set(mcap.index))
+    except ThrottledError:
+        return False
+    names = build_name_map(set(agg.index))
+    update_web_data(date, agg, mcap, detail, names)
+    print(f"  웹 데이터 갱신 완료 ({date})")
+    return True
+
+
+def run_year_batch():
+    """--year 모드: 거래일 전체 중 '안 받은 것'만, 한 번에 BATCH_PER_RUN개씩.
+    종료코드 0=전부완료 / 2=배치끝(더남음) / 3=throttle(길게 쉬고 재시도)."""
+    all_dates = trading_days_of_year(YEAR)
+    if not all_dates:
+        print("거래일 목록을 못 받았습니다(throttle 가능). 잠시 후 재시도.")
+        return 3
+    todo = [d for d in all_dates if not _is_done(d)]
+    done = len(all_dates) - len(todo)
+    print(f"\n[연도 {YEAR}] 거래일 {len(all_dates)}개 / 완료 {done} / 남음 {len(todo)}")
+    if not todo:
+        print("=== 모든 거래일 완료! ===")
+        return 0
+    batch = todo[:BATCH_PER_RUN]
+    print(f"이번 실행 배치({len(batch)}개): {batch}\n")
+    throttled = False
+    for n, date in enumerate(batch, 1):
+        print(f"===== [{n}/{len(batch)}] {date} =====")
+        if not _crawl_one(date):
+            throttled = True
+            print("  -> throttle로 판단, 이번 배치 중단(잠시 쉬었다 재시도).")
+            break
+        if REST_BETWEEN and n < len(batch):
+            print(f"  ({REST_BETWEEN}초 쉬는 중... throttle 방지)")
+            time.sleep(REST_BETWEEN)
+    remaining = [d for d in all_dates if not _is_done(d)]
+    print(f"\n남은 거래일: {len(remaining)}개")
+    if not remaining:
+        print("=== 모든 거래일 완료! ===")
+        return 0
+    return 3 if throttled else 2
+
+
 def main():
     if not ensure_krx_login():
-        return
+        return 1
 
-    # 자동(--auto): 당일(최근 영업일)만 / 수동: 입력한 날짜 전부
+    if YEAR:
+        return run_year_batch()
+
     dates = [resolve_base_date()] if AUTO else ask_dates_multi()
     dates = sorted(set(dates))
     print(f"\n크롤 대상 날짜 ({len(dates)}개): {dates}\n")
 
-    store = {}   # date -> (agg, mcap, detail, names)
+    store = {}
     for n, date in enumerate(dates, 1):
         print(f"===== [{n}/{len(dates)}] {date} =====")
-        mcap = get_market_cap(date)
-        if mcap.empty:
-            print(f"  ⚠️ {date}: KRX 시총 데이터가 비어 왔습니다(throttle/휴장/로그인). 이 날짜 건너뜀.")
-            continue
-        agg, detail = aggregate_for_date(date, set(mcap.index))
-        names = build_name_map(set(agg.index))
-        update_web_data(date, agg, mcap, detail, names)
-        store[date] = (agg, mcap, detail, names)
-        print(f"  웹 데이터 갱신 완료 ({date})")
+        if _crawl_one(date):
+            store[date] = True
         if REST_BETWEEN and n < len(dates):
             print(f"  ({REST_BETWEEN}초 쉬는 중... throttle 방지)")
             time.sleep(REST_BETWEEN)
 
     print("\n[웹] data.json / detail_*.json 모두 갱신 완료.")
-
-    if MAKE_EXCEL and not AUTO:
-        print("[엑셀] 생성 중...")
-        _make_excel(dates[-1], store)
-
     print("\n완료!")
+    return 0
+
 
 if __name__ == "__main__":
+    _code = 1
     try:
-        main()
+        _code = main() or 0
     except ModuleNotFoundError as e:
         print("\n[오류] 필요한 패키지가 없습니다:", e)
         print("    pip install pykrx openpyxl pandas tqdm")
@@ -759,5 +848,6 @@ if __name__ == "__main__":
         import traceback
         print("\n[오류] 실행 중 문제가 발생했습니다. 아래 내용을 캡쳐해 알려주세요:\n")
         traceback.print_exc()
-    if not AUTO:
+    if not AUTO and not YEAR:
         input("\n끝났습니다. 이 창을 닫으려면 Enter 키를 누르세요...")
+    sys.exit(_code)
