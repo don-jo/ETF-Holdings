@@ -57,15 +57,19 @@ from pykrx.website.krx.etx.core import 전종목시세_ETF
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-WORKERS = 10       # 동시 요청 수. 내부 연결풀(10)과 맞춤. 더 막히면 8로.
+WORKERS = 6        # 동시 요청 수. throttle 잦으면 4로. (연결풀 10 이하 유지)
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
-SLEEP = 0.0        # 각 요청 후 추가 대기(초). 보통 0으로 충분.
-ASK_DATES = True   # 실행 시 기준일/비교일을 물어볼지. False면 위 값 그대로 사용.
+SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
+ASK_DATES = True   # (현재 미사용) 호환용
+REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
+MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
 
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(OUTPUT_DIR, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
+WEB_DIR = os.path.join(OUTPUT_DIR, "data")   # 웹용 json 출력 폴더
+os.makedirs(WEB_DIR, exist_ok=True)
 
 
 # ============================================================
@@ -117,6 +121,25 @@ def ask_dates():
     return base, cmp_
 
 
+def ask_dates_multi():
+    """크롤링할 날짜들을 여러 개 입력받는다. 엔터=최근 영업일 1개."""
+    import re
+    print("\n크롤링할 날짜를 입력하세요. 여러 개면 띄어쓰기/콤마로 구분.")
+    print("  예) 20260430 20260529 20260625    (그냥 엔터 = 최근 영업일)")
+    try:
+        raw = input("날짜들: ").strip()
+    except EOFError:
+        raw = ""
+    if not raw:
+        return [resolve_base_date()]
+    toks = [t for t in re.split(r"[\s,]+", raw) if t]
+    good = [t for t in toks if _valid_date(t)]
+    bad = [t for t in toks if not _valid_date(t)]
+    if bad:
+        print("  (형식이 이상해 무시:", bad, ")")
+    return good or [resolve_base_date()]
+
+
 def ensure_krx_login():
     if KRX_LOGGED_IN:
         return True
@@ -141,8 +164,16 @@ def ensure_krx_login():
 # ============================================================
 
 def get_market_cap(date):
-    df = stock.get_market_cap_by_ticker(date, market="ALL", alternative=True)
-    return df[df["시가총액"] > 0]
+    """시가총액 조회. KRX가 빈 응답/오류를 주면 빈 DataFrame 반환(죽지 않음). 재시도 포함."""
+    for _ in range(3):
+        try:
+            df = stock.get_market_cap_by_ticker(date, market="ALL", alternative=True)
+            if df is not None and not df.empty and "시가총액" in df.columns:
+                return df[df["시가총액"] > 0]
+        except Exception:
+            pass
+        time.sleep(1.0)
+    return pd.DataFrame(columns=["시가총액"])
 
 
 def get_etf_meta(date):
@@ -167,6 +198,20 @@ def get_etf_sizes(date):
     return get_etf_meta(date)[0]
 
 
+def get_etf_list_robust(date, tries=4):
+    """ETF 목록을 여러 번 받아 '가장 많이 받힌' 결과 사용(부분 수신 방지)."""
+    best = []
+    for _ in range(tries):
+        try:
+            lst = stock.get_etf_ticker_list(date)
+        except Exception:
+            lst = []
+        if lst and len(lst) > len(best):
+            best = lst
+        time.sleep(0.4)
+    return best
+
+
 def _fetch_pdf(etf, date):
     """PDF 1건 조회. 빈 응답/오류 모두 재시도(세션 만료 대비). (etf, DataFrame|None)."""
     for i in range(RETRIES + 1):
@@ -187,14 +232,14 @@ def _fetch_pdf(etf, date):
 def aggregate_for_date(date, mcap_index):
     """종목별 ETF 보유액 병렬 집계 + ETF별 상세. 캐시: cache/agg_v4_{date}.pkl
     반환: (agg_df, detail_df)"""
-    cache_path = os.path.join(CACHE_DIR, f"agg_v4_{date}.pkl")
+    cache_path = os.path.join(CACHE_DIR, f"agg_v5_{date}.pkl")
     if os.path.exists(cache_path):
         print(f"  [cache] {date} 집계 캐시 사용")
         d = pd.read_pickle(cache_path)
         return d["agg"], d["detail"]
 
     print(f"  ETF 목록/순자산 조회중... ({date})")
-    etf_list = stock.get_etf_ticker_list(date)
+    etf_list = get_etf_list_robust(date)
     sizes, etf_names = get_etf_meta(date)
     targets = [e for e in etf_list if sizes.get(e, 0.0) > 0]
     print(f"  ETF {len(etf_list)}개 (보유액>0 {len(targets)}개). "
@@ -213,19 +258,41 @@ def aggregate_for_date(date, mcap_index):
                 continue
             aum = sizes[etf]
             enm = etf_names.get(etf, etf)
-            total_amt = 0.0
+            # --- 1CU 순자산총액(분모) 파악 ---
+            # 해외혼합 ETF: '설정현금액' 행의 시가총액 = 1CU 순자산총액(해외분 포함).
+            # 국내전용 ETF: 설정현금액 행이 없음 → 시가총액 칸 전체 합 = 순자산.
+            setjeong = 0.0   # 설정현금액(= 총 NAV)
+            cash_amt = 0.0   # 원화현금
+            sigtot = 0.0     # 시가총액 칸 전체 합(설정현금액 제외)
             for _, row in pdf.iterrows():
-                total_amt += _to_num(row.get("금액"))
+                nm = str(row.get("구성종목명", "")).strip()
+                sga = _to_num(row.get("시가총액"))
+                if nm == "설정현금액":
+                    setjeong = sga
+                else:
+                    sigtot += sga
+                    if nm == "원화현금":
+                        cash_amt = sga
+            denom = setjeong if setjeong > 0 else sigtot
+
             for tk, row in pdf.iterrows():
+                nm = str(row.get("구성종목명", "")).strip()
+                if nm == "설정현금액":
+                    continue   # 분모 전용 — 보유 항목 아님
+                if nm == "원화현금":   # 현금: 종목 아님 → 종목집계 제외, 현금비중만 보존
+                    if denom > 0 and cash_amt > 0:
+                        cw = cash_amt / denom
+                        detail_rows.append(("원화현금", etf, enm, cw * 100.0, aum * cw, aum))
+                    continue
                 tk = str(tk).zfill(6)
                 if tk not in mcap_index:
                     continue
                 bijung = _to_num(row.get("비중"))
-                amt = _to_num(row.get("금액"))
+                sga = _to_num(row.get("시가총액"))
                 if bijung > 0:
-                    w = bijung / 100.0
-                elif total_amt > 0 and amt > 0:
-                    w = amt / total_amt
+                    w = bijung / 100.0                 # KRX 공식 비중(패시브 등)
+                elif denom > 0 and sga > 0:
+                    w = sga / denom                    # 해외혼합: 시가총액 ÷ 설정현금액
                 else:
                     w = 0.0
                 val = aum * w
@@ -585,7 +652,7 @@ def update_web_data(date, agg, mcap, detail, names):
             "n": int(agg.loc[code, "보유etf수"]),
         }
     # data.json 병합
-    djson = os.path.join(OUTPUT_DIR, "data.json")
+    djson = os.path.join(WEB_DIR, "data.json")
     data = {"dates": [], "stocks": {}}
     if os.path.exists(djson):
         try:
@@ -616,7 +683,7 @@ def update_web_data(date, agg, mcap, detail, names):
         })
     for c in det:
         det[c].sort(key=lambda x: -x["val"])
-    with open(os.path.join(OUTPUT_DIR, f"detail_{date}.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(WEB_DIR, f"detail_{date}.json"), "w", encoding="utf-8") as f:
         json.dump(det, f, ensure_ascii=False)
 
 
@@ -624,38 +691,63 @@ def update_web_data(date, agg, mcap, detail, names):
 # 메인
 # ============================================================
 
+def _make_excel(base, store):
+    """최근 크롤 날짜(base) vs COMPARE_DATE 로 엑셀 1개 생성."""
+    cmp = COMPARE_DATE
+    if base == cmp:
+        print("  엑셀 생략(기준일=비교일)")
+        return
+
+    def get(date):
+        if date in store:
+            return store[date]
+        mc = get_market_cap(date)
+        ag, de = aggregate_for_date(date, set(mc.index))
+        nm = build_name_map(set(ag.index))
+        return (ag, mc, de, nm)
+
+    ab, mb, db, nb = get(base)
+    ac, mc, dc, nc = get(cmp)
+    names = {**nc, **nb}
+    t_base = make_ratio_table(ab, mb, names)
+    t_cmp = make_ratio_table(ac, mc, names)
+    out = os.path.join(OUTPUT_DIR, f"ETF편입분석_{base}_vs_{cmp}.xlsx")
+    write_excel(out, base, cmp, t_base, t_cmp, db, dc, names)
+    print(f"  엑셀: {out}")
+
+
 def main():
     if not ensure_krx_login():
         return
 
-    base_date, cmp_date = ask_dates()
-    print(f"\n기준일: {base_date} / 비교 기준일: {cmp_date}\n")
+    # 자동(--auto): 당일(최근 영업일)만 / 수동: 입력한 날짜 전부
+    dates = [resolve_base_date()] if AUTO else ask_dates_multi()
+    dates = sorted(set(dates))
+    print(f"\n크롤 대상 날짜 ({len(dates)}개): {dates}\n")
 
-    print("[1/4] 시가총액 유니버스 로딩")
-    mcap_base = get_market_cap(base_date)
-    mcap_cmp = get_market_cap(cmp_date)
+    store = {}   # date -> (agg, mcap, detail, names)
+    for n, date in enumerate(dates, 1):
+        print(f"===== [{n}/{len(dates)}] {date} =====")
+        mcap = get_market_cap(date)
+        if mcap.empty:
+            print(f"  ⚠️ {date}: KRX 시총 데이터가 비어 왔습니다(throttle/휴장/로그인). 이 날짜 건너뜀.")
+            continue
+        agg, detail = aggregate_for_date(date, set(mcap.index))
+        names = build_name_map(set(agg.index))
+        update_web_data(date, agg, mcap, detail, names)
+        store[date] = (agg, mcap, detail, names)
+        print(f"  웹 데이터 갱신 완료 ({date})")
+        if REST_BETWEEN and n < len(dates):
+            print(f"  ({REST_BETWEEN}초 쉬는 중... throttle 방지)")
+            time.sleep(REST_BETWEEN)
 
-    print("[2/4] 기준일(현재) ETF 집계")
-    agg_base, det_base = aggregate_for_date(base_date, set(mcap_base.index))
-    print("[3/4] 비교 기준일 ETF 집계")
-    agg_cmp, det_cmp = aggregate_for_date(cmp_date, set(mcap_cmp.index))
+    print("\n[웹] data.json / detail_*.json 모두 갱신 완료.")
 
-    print("[4/4] 종목명 매핑 + 엑셀 생성")
-    all_tk = set(agg_base.index) | set(agg_cmp.index)
-    names = build_name_map(all_tk)
-    t_base = make_ratio_table(agg_base, mcap_base, names)
-    t_cmp = make_ratio_table(agg_cmp, mcap_cmp, names)
+    if MAKE_EXCEL and not AUTO:
+        print("[엑셀] 생성 중...")
+        _make_excel(dates[-1], store)
 
-    out_path = os.path.join(
-        OUTPUT_DIR, f"ETF편입분석_{base_date}_vs_{cmp_date}.xlsx")
-    write_excel(out_path, base_date, cmp_date, t_base, t_cmp, det_base, det_cmp, names)
-    print(f"\n완료(엑셀): {out_path}")
-
-    print("[웹] data.json / detail_*.json 갱신")
-    update_web_data(base_date, agg_base, mcap_base, det_base, names)
-    update_web_data(cmp_date, agg_cmp, mcap_cmp, det_cmp, names)
-    print("  웹 데이터 갱신 완료 (index.html 에서 사용)")
-
+    print("\n완료!")
 
 if __name__ == "__main__":
     try:

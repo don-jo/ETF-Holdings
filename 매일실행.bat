@@ -9,6 +9,7 @@ python "%~dp0etf_holdings.py" --auto
 echo [크롤 종료코드 %errorlevel%]>>"%LOG%"
 echo.
 echo [2/2] GitHub 업로드
+if exist ".git\\index.lock" del /f /q ".git\\index.lock"
 git add -A
 git commit -m "데이터 갱신 %date% %time%">>"%LOG%" 2>&1
 git push>>"%LOG%" 2>&1

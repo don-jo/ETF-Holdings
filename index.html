@@ -189,7 +189,7 @@ function buildEtfIndexForDate(date){
 async function ensureDetail(date){
   DATA.detail=DATA.detail||{};
   if(DATA.detail[date]){ if(!etfMeta[date])buildEtfIndexForDate(date); return; }
-  try{ const r=await fetch(`detail_${date}.json`); DATA.detail[date]=r.ok?await r.json():{}; }
+  try{ const r=await fetch(`data/detail_${date}.json`); DATA.detail[date]=r.ok?await r.json():{}; }
   catch(e){ DATA.detail[date]={}; }
   buildEtfIndexForDate(date);
 }
@@ -405,7 +405,7 @@ function renderEtf(){
   etfMatrix.innerHTML=h+`</tbody></table>`; etfMatrix.style.display="block";
 }
 
-fetch("data.json").then(r=>{if(!r.ok)throw 0;return r.json();}).then(j=>{DATA=j;DATA.detail=DATA.detail||{};init();}).catch(()=>{DATA=SAMPLE;init();});
+fetch("data/data.json").then(r=>{if(!r.ok)throw 0;return r.json();}).then(j=>{DATA=j;DATA.detail=DATA.detail||{};init();}).catch(()=>{DATA=SAMPLE;init();});
 </script>
 </body>
 </html>
