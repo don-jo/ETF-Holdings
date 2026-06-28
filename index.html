@@ -186,6 +186,12 @@ function buildEtfIndexForDate(date){
     }
   }
 }
+async function ensureStocks(date){
+  DATA.stocks=DATA.stocks||{};
+  if(DATA.stocks[date])return;          // 이미 받음(또는 SAMPLE)
+  try{ const r=await fetch(`data/stocks_${date}.json`); DATA.stocks[date]=r.ok?await r.json():{}; }
+  catch(e){ DATA.stocks[date]={}; }
+}
 async function ensureDetail(date){
   DATA.detail=DATA.detail||{};
   if(DATA.detail[date]){ if(!etfMeta[date])buildEtfIndexForDate(date); return; }
@@ -196,6 +202,7 @@ async function ensureDetail(date){
 async function refreshData(){
   const g=DATA.generated||"";
   genInfo.textContent=g+" · 불러오는 중…";
+  await ensureStocks(dval(baseSel)); await ensureStocks(dval(cmpSel));
   await ensureDetail(dval(baseSel)); await ensureDetail(dval(cmpSel));
   genInfo.textContent=g;
   refreshLists(); renderAll();
@@ -301,6 +308,7 @@ function resolveCode(qstr){
 }
 async function doLookup(){
   const base=dval(baseSel),cmp=dval(cmpSel),bd=fmtDate(base),cd=fmtDate(cmp);
+  await ensureStocks(base); await ensureStocks(cmp);
   await ensureDetail(base); await ensureDetail(cmp);
   const code=resolveCode(q.value);
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
@@ -405,7 +413,7 @@ function renderEtf(){
   etfMatrix.innerHTML=h+`</tbody></table>`; etfMatrix.style.display="block";
 }
 
-fetch("data/data.json").then(r=>{if(!r.ok)throw 0;return r.json();}).then(j=>{DATA=j;DATA.detail=DATA.detail||{};init();}).catch(()=>{DATA=SAMPLE;init();});
+fetch("data/data.json").then(r=>{if(!r.ok)throw 0;return r.json();}).then(j=>{DATA=j;DATA.detail=DATA.detail||{};DATA.stocks=DATA.stocks||{};init();}).catch(()=>{DATA=SAMPLE;init();});
 </script>
 </body>
 </html>

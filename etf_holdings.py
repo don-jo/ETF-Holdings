@@ -660,7 +660,8 @@ def write_excel(path, base_date, cmp_date, t_base, t_cmp, det_base, det_cmp, nam
 
 def update_web_data(date, agg, mcap, detail, names):
     """웹 뷰어용 데이터 출력.
-    - data.json : 모든 날짜의 '종목 집계'(가벼움) — 날짜를 누적 병합
+    - data.json : 날짜 목록만(경량)
+    - stocks_<date>.json : 그 날짜의 '종목 집계'(가벼움) — 날짜별 분리
     - detail_<date>.json : 그 날짜의 'ETF별 상세'(무거움) — 날짜별 분리 저장
     금액 단위는 억원."""
     EOK = 1e8
@@ -675,16 +676,19 @@ def update_web_data(date, agg, mcap, detail, names):
             "val": round(float(agg.loc[code, "etf보유액"]) / EOK),
             "n": int(agg.loc[code, "보유etf수"]),
         }
-    # data.json 병합
+    # 종목 집계: 날짜별 파일(stocks_<date>.json)로 분리 — data.json 비대화 방지
+    with open(os.path.join(WEB_DIR, f"stocks_{date}.json"), "w", encoding="utf-8") as f:
+        json.dump(stocks, f, ensure_ascii=False)
+    # data.json: 날짜 목록만(경량). 옛 형식의 stocks/detail 키는 제거.
     djson = os.path.join(WEB_DIR, "data.json")
-    data = {"dates": [], "stocks": {}}
+    data = {"dates": []}
     if os.path.exists(djson):
         try:
             data = json.load(open(djson, encoding="utf-8"))
         except Exception:
-            data = {"dates": [], "stocks": {}}
-    data.pop("detail", None)   # 상세는 detail_<date>.json 로 분리(여기엔 안 넣음)
-    data.setdefault("stocks", {})[date] = stocks
+            data = {"dates": []}
+    data.pop("detail", None)
+    data.pop("stocks", None)
     data["dates"] = sorted(set(data.get("dates", [])) | {date})
     data["generated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M") + " 갱신"
     with open(djson, "w", encoding="utf-8") as f:
