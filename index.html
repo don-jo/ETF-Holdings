@@ -179,10 +179,15 @@ function snap(el){const d=dval(el);const n=nearestDate(d);if(n!==d)setDval(el,n)
 function buildEtfIndexForDate(date){
   etfMeta[date]={}; etfHold[date]={};
   const det=(DATA.detail||{})[date]||{};
+  const meta=det._etf||{};                       // 압축형: ETF 이름/AUM 모음
   for(const stock in det){
+    if(stock==="_etf")continue;
     for(const e of det[stock]){
-      etfMeta[date][e.etf]={name:e.name,aum:e.aum};
-      (etfHold[date][e.etf]=etfHold[date][e.etf]||{})[stock]={w:e.w,val:e.val};
+      const code=(e.e!==undefined)?e.e:e.etf;    // 신형 e / 구형 etf
+      const val=(e.v!==undefined)?e.v:e.val;     // 신형 v / 구형 val
+      const m=meta[code]||{name:e.name,aum:e.aum};
+      etfMeta[date][code]={name:m.name,aum:m.aum};
+      (etfHold[date][code]=etfHold[date][code]||{})[stock]={w:e.w,val:val};
     }
   }
 }
@@ -322,10 +327,13 @@ async function doLookup(){
     <div class="kpi"><div class="v ${sCls(wCur-wCmp)}">${sTxt(wCur-wCmp,'pct')}%p</div><div class="k">${cd} 대비</div></div>
     <div class="kpi"><div class="v">${won(b?b.val:0)}억</div><div class="k">ETF 보유액 · ${bd}</div></div>
     <div class="kpi"><div class="v">${b?b.n:0}개</div><div class="k">보유 ETF 수</div></div>`;
+  const metaB=etfMeta[base]||{}, metaC=etfMeta[cmp]||{};
+  const ec=e=>(e.e!==undefined)?e.e:e.etf;          // ETF코드
+  const ev=e=>(e.v!==undefined)?e.v:e.val;          // 보유액
   const db=(DATA.detail[base]||{})[code]||[],dc=(DATA.detail[cmp]||{})[code]||[];
   const map={};
-  db.forEach(e=>map[e.etf]={etf:e.etf,name:e.name,aum:e.aum,wCur:e.w,valCur:e.val,wCmp:0,valCmp:0});
-  dc.forEach(e=>{map[e.etf]=map[e.etf]||{etf:e.etf,name:e.name,aum:e.aum,wCur:0,valCur:0};map[e.etf].wCmp=e.w;map[e.etf].valCmp=e.val;if(!map[e.etf].aum)map[e.etf].aum=e.aum;});
+  db.forEach(e=>{const c=ec(e),m=metaB[c]||{name:e.name,aum:e.aum};map[c]={etf:c,name:m.name||c,aum:m.aum||0,wCur:e.w,valCur:ev(e),wCmp:0,valCmp:0};});
+  dc.forEach(e=>{const c=ec(e),m=metaC[c]||{name:e.name,aum:e.aum};map[c]=map[c]||{etf:c,name:m.name||c,aum:m.aum||0,wCur:0,valCur:0};map[c].wCmp=e.w;map[c].valCmp=ev(e);if(!map[c].aum)map[c].aum=m.aum||0;});
   lkArr=Object.values(map).map(e=>{const dV=e.valCur-e.valCmp;
     let st=e.valCmp<=0&&e.valCur>0?"신규":(e.valCur<=0&&e.valCmp>0?"제외":(dV>0?"증가":(dV<0?"감소":"유지")));
     return {...e,dVal:dV,status:st};});

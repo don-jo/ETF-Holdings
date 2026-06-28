@@ -701,16 +701,21 @@ def update_web_data(date, agg, mcap, detail, names):
     ws = detail["비중"].tolist()
     vals = detail["보유액"].tolist()
     aums = detail["AUM"].tolist()
-    det = {}
+    # 압축형: ETF 이름/AUM은 "_etf"에 한 번만, 각 행은 e(코드)/w(비중)/v(보유액)만
+    det = {"_etf": {}}
     for i in range(len(detail)):
+        e = etfs[i]
+        if e not in det["_etf"]:
+            det["_etf"][e] = {"name": enames[i], "aum": round(float(aums[i]) / EOK)}
         det.setdefault(codes[i], []).append({
-            "etf": etfs[i], "name": enames[i],
-            "aum": round(float(aums[i]) / EOK),
+            "e": e,
             "w": round(float(ws[i]), 2),
-            "val": round(float(vals[i]) / EOK, 1),
+            "v": round(float(vals[i]) / EOK, 1),
         })
     for c in det:
-        det[c].sort(key=lambda x: -x["val"])
+        if c == "_etf":
+            continue
+        det[c].sort(key=lambda x: -x["v"])
     with open(os.path.join(WEB_DIR, f"detail_{date}.json"), "w", encoding="utf-8") as f:
         json.dump(det, f, ensure_ascii=False)
 
