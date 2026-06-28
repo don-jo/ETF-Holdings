@@ -25,6 +25,8 @@ import os
 import sys
 import json
 import time
+import socket as _socket
+_socket.setdefaulttimeout(30)  # 요청 1건 무한대기(hang) 방지
 import warnings
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -65,13 +67,13 @@ from pykrx.website.krx.etx.core import 전종목시세_ETF
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-WORKERS = 6        # 동시 요청 수. throttle 잦으면 4로. (연결풀 10 이하 유지)
+WORKERS = 10       # 동시요청(pykrx 연결풀 최대치). 11+ 이면 pool full 경고.
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
 SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
 ASK_DATES = True   # (현재 미사용) 호환용
 REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
-BATCH_PER_RUN = 3      # --year 모드: 한 번 실행에 받을 최대 날짜 수(로그인 1시간 만료 회피)
+BATCH_PER_RUN = 1      # 한 번 실행에 1일치만(매 날짜 새 로그인 → 세션 만료 회피)
 FAIL_RATIO_LIMIT = 0.15  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
 MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
 
