@@ -41,6 +41,7 @@ for _i, _a in enumerate(sys.argv):
         YEAR = sys.argv[_i + 1]
     elif _a.startswith("--year="):
         YEAR = _a.split("=", 1)[1]
+INCLUDE_ETF = "--withetf" in sys.argv  # ETF가 보유한 '다른 ETF'도 종목처럼 포함
 
 import pandas as pd
 from tqdm import tqdm
@@ -210,6 +211,31 @@ def get_etf_meta(date):
 def get_etf_sizes(date):
     """ETF별 순자산(원). (종목검증.py 호환)"""
     return get_etf_meta(date)[0]
+
+
+def get_etf_universe(date):
+    """ETF를 '종목'처럼 쓰기 위한 시총/종가/상장좌수 (ETF-in-ETF 보유 반영용).
+    {코드: {"종가","시가총액","상장주식수","name"}} 반환."""
+    try:
+        raw = 전종목시세_ETF().fetch(date)
+    except Exception:
+        return None
+    if raw is None or raw.empty:
+        return None
+    out = {}
+    for _, r in raw.iterrows():
+        c = str(r.get("ISU_SRT_CD", "")).zfill(6)
+        if not c or c == "000000":
+            continue
+        mkt = _to_num(r.get("MKTCAP"))
+        if mkt <= 0:
+            mkt = _to_num(r.get("NAV")) * _to_num(r.get("LIST_SHRS"))
+        prc = _to_num(r.get("TDD_CLSPRC")) or _to_num(r.get("NAV"))
+        shr = _to_num(r.get("LIST_SHRS"))
+        nm = r.get("ISU_ABBRV", c)
+        out[c] = {"종가": prc, "시가총액": mkt, "상장주식수": shr,
+                  "name": nm if isinstance(nm, str) and nm else c}
+    return out
 
 
 def get_etf_list_robust(date, tries=4):
@@ -801,11 +827,27 @@ def _crawl_one(date):
     if mcap.empty:
         print(f"  WARN {date}: 시총 빈 응답(throttle/휴장). 이 날짜 보류.")
         return False
+    etf_univ = None
+    if INCLUDE_ETF:   # ETF를 '종목'처럼 시총 유니버스에 합쳐 ETF-in-ETF 보유도 잡음
+        etf_univ = get_etf_universe(date)
+        if etf_univ:
+            add = {c: v for c, v in etf_univ.items()
+                   if c not in mcap.index and v["시가총액"] > 0}
+            if add:
+                edf = pd.DataFrame.from_dict(
+                    {c: {"종가": v["종가"], "시가총액": v["시가총액"],
+                         "상장주식수": v["상장주식수"]} for c, v in add.items()},
+                    orient="index")
+                mcap = pd.concat([mcap, edf])
     try:
         agg, detail = aggregate_for_date(date, set(mcap.index))
     except ThrottledError:
         return False
     names = build_name_map(set(agg.index))
+    if etf_univ:   # ETF 보유분 이름 보강
+        for c in agg.index:
+            if c in etf_univ and names.get(c, c) == c:
+                names[c] = etf_univ[c]["name"]
     update_web_data(date, agg, mcap, detail, names)
     print(f"  웹 데이터 갱신 완료 ({date})")
     return True
