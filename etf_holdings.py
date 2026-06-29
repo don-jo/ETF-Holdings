@@ -76,6 +76,7 @@ REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
 BATCH_PER_RUN = 1      # 한 번 실행에 1일치만(매 날짜 새 로그인 → 세션 만료 회피)
 FAIL_RATIO_LIMIT = 0.15  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
 MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
+WRITE_CACHE = False # 집계 캐시(.pkl) 저장 안 함. 이어받기는 웹파일 기준이라 불필요+디스크 낭비 방지.
 
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(OUTPUT_DIR, "cache")
@@ -196,7 +197,8 @@ def get_etf_meta(date):
         return sizes, names
     for _, r in raw.iterrows():
         tk = str(r.get("ISU_SRT_CD", "")).zfill(6)
-        aum = _to_num(r.get("NAV")) * _to_num(r.get("LIST_SHRS"))
+        amt = _to_num(r.get("NETASST_TOTAMT")) or _to_num(r.get("NAV_TOTAMT"))
+        aum = amt if amt > 0 else _to_num(r.get("NAV")) * _to_num(r.get("LIST_SHRS"))
         if aum <= 0:
             aum = _to_num(r.get("MKTCAP"))
         sizes[tk] = aum
@@ -247,9 +249,9 @@ class ThrottledError(Exception):
 
 
 def aggregate_for_date(date, mcap_index):
-    """종목별 ETF 보유액 병렬 집계 + ETF별 상세. 캐시: cache/agg_v5_{date}.pkl
+    """종목별 ETF 보유액 병렬 집계 + ETF별 상세. 캐시: cache/agg_v6_{date}.pkl
     반환: (agg_df, detail_df). 실패율 높으면 ThrottledError."""
-    cache_path = os.path.join(CACHE_DIR, f"agg_v5_{date}.pkl")
+    cache_path = os.path.join(CACHE_DIR, f"agg_v6_{date}.pkl")
     if os.path.exists(cache_path):
         print(f"  [cache] {date} 집계 캐시 사용")
         d = pd.read_pickle(cache_path)
@@ -299,13 +301,14 @@ def aggregate_for_date(date, mcap_index):
                 if nm == "원화현금":   # 현금: 종목 아님 → 종목집계 제외, 현금비중만 보존
                     if denom > 0 and cash_amt > 0:
                         cw = cash_amt / denom
-                        detail_rows.append(("원화현금", etf, enm, cw * 100.0, aum * cw, aum))
+                        detail_rows.append(("원화현금", etf, enm, cw * 100.0, aum * cw, aum, 0.0))
                     continue
                 tk = str(tk).zfill(6)
                 if tk not in mcap_index:
                     continue
                 bijung = _to_num(row.get("비중"))
                 sga = _to_num(row.get("시가총액"))
+                gye = _to_num(row.get("계약수"))
                 if bijung > 0:
                     w = bijung / 100.0                 # KRX 공식 비중(패시브 등)
                 elif denom > 0 and sga > 0:
@@ -315,7 +318,7 @@ def aggregate_for_date(date, mcap_index):
                 val = aum * w
                 hold_value[tk] = hold_value.get(tk, 0.0) + val
                 hold_count[tk] = hold_count.get(tk, 0) + 1
-                detail_rows.append((tk, etf, enm, w * 100.0, val, aum))
+                detail_rows.append((tk, etf, enm, w * 100.0, val, aum, gye))
 
     if fail:
         print(f"  (PDF 비어있음/실패 {fail}건 - 합성·현금형 등, 무시)")
@@ -333,8 +336,9 @@ def aggregate_for_date(date, mcap_index):
     }).fillna(0)
     agg.index.name = "티커"
     detail = pd.DataFrame(detail_rows,
-                          columns=["종목코드", "ETF코드", "ETF명", "비중", "보유액", "AUM"])
-    pd.to_pickle({"agg": agg, "detail": detail}, cache_path)
+                          columns=["종목코드", "ETF코드", "ETF명", "비중", "보유액", "AUM", "계약수"])
+    if WRITE_CACHE:
+        pd.to_pickle({"agg": agg, "detail": detail}, cache_path)
     return agg, detail
 
 
@@ -670,12 +674,17 @@ def update_web_data(date, agg, mcap, detail, names):
     for code in agg.index:
         if code not in mc.index:
             continue
-        stocks[code] = {
+        rec = {
             "name": names.get(code, code),
             "mcap": round(float(mc.loc[code]) / EOK),
             "val": round(float(agg.loc[code, "etf보유액"]) / EOK),
             "n": int(agg.loc[code, "보유etf수"]),
         }
+        if "종가" in mcap.columns:
+            rec["price"] = int(round(float(mcap.loc[code, "종가"])))
+        if "상장주식수" in mcap.columns:
+            rec["shares"] = int(float(mcap.loc[code, "상장주식수"]))
+        stocks[code] = rec
     # 종목 집계: 날짜별 파일(stocks_<date>.json)로 분리 — data.json 비대화 방지
     with open(os.path.join(WEB_DIR, f"stocks_{date}.json"), "w", encoding="utf-8") as f:
         json.dump(stocks, f, ensure_ascii=False)
@@ -701,7 +710,8 @@ def update_web_data(date, agg, mcap, detail, names):
     ws = detail["비중"].tolist()
     vals = detail["보유액"].tolist()
     aums = detail["AUM"].tolist()
-    # 압축형: ETF 이름/AUM은 "_etf"에 한 번만, 각 행은 e(코드)/w(비중)/v(보유액)만
+    qs = detail["계약수"].tolist() if "계약수" in detail.columns else [0]*len(detail)
+    # 압축형: ETF 이름/AUM은 "_etf"에 한 번만, 각 행은 e/w(비중)/v(보유액)/q(계약수)
     det = {"_etf": {}}
     for i in range(len(detail)):
         e = etfs[i]
@@ -711,6 +721,7 @@ def update_web_data(date, agg, mcap, detail, names):
             "e": e,
             "w": round(float(ws[i]), 2),
             "v": round(float(vals[i]) / EOK, 1),
+            "q": round(float(qs[i]), 2),
         })
     for c in det:
         if c == "_etf":
@@ -750,8 +761,18 @@ def _make_excel(base, store):
 
 
 def _is_done(date):
-    """그 날짜가 이미 받아졌는지(웹 detail 파일 존재 여부)."""
-    return os.path.exists(os.path.join(WEB_DIR, f"detail_{date}.json"))
+    """'새 스키마'로 받아졌는지 — stocks 파일에 price(종가)가 있으면 완료.
+    옛 스키마(price 없음)는 미완료로 봐서 자동 재크롤한다."""
+    p = os.path.join(WEB_DIR, f"stocks_{date}.json")
+    if not os.path.exists(p):
+        return False
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+        for v in d.values():
+            return "price" in v
+        return False
+    except Exception:
+        return False
 
 
 def trading_days_of_year(year):
@@ -803,7 +824,7 @@ def run_year_batch():
     if not todo:
         print("=== 모든 거래일 완료! ===")
         return 0
-    batch = todo[:BATCH_PER_RUN]
+    batch = list(reversed(todo))[:BATCH_PER_RUN]   # 최신 날짜부터(역순)
     print(f"이번 실행 배치({len(batch)}개): {batch}\n")
     throttled = False
     for n, date in enumerate(batch, 1):
