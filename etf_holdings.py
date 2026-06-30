@@ -93,6 +93,15 @@ try:
     from pykrx.website.comm import auth as _auth
     _POOL = max(WORKERS, 10)
 
+    # (1) 가장 확실한 방법: HTTPAdapter가 만들어질 때 풀 기본값을 _POOL로.
+    #     requests.Session()이 새로 생길 때마다 자동으로 큰 풀이 끼워진다.
+    _orig_ad_init = _HTTPAdapter.__init__
+    def _big_ad_init(self, *a, **kw):
+        kw.setdefault("pool_connections", _POOL)
+        kw.setdefault("pool_maxsize", _POOL)
+        return _orig_ad_init(self, *a, **kw)
+    _HTTPAdapter.__init__ = _big_ad_init
+
     def _mount_big_pool(_sess):
         _ad = _HTTPAdapter(pool_connections=_POOL, pool_maxsize=_POOL, max_retries=0)
         _sess.mount("https://", _ad)
