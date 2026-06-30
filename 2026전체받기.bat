@@ -15,7 +15,7 @@ set /a TRIES+=1
 echo.
 echo ============== 시도 %TRIES%회차  %date% %time% ==============
 if exist ".git\index.lock" del /f /q ".git\index.lock"
-python "%~dp0etf_holdings.py" --year 2026
+python "%~dp0etf_holdings.py" --year 2026 --withetf
 set CODE=%errorlevel%
 echo [종료코드 %CODE%]
 

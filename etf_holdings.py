@@ -790,6 +790,8 @@ def update_web_data(date, agg, mcap, detail, names):
         if c == "_etf":
             continue
         det[c].sort(key=lambda x: -x["v"])
+    if INCLUDE_ETF:
+        det["_withetf"] = 1   # ETF 보유분까지 받았다는 표시(_is_done 재크롤 판정용)
     with open(os.path.join(WEB_DIR, f"detail_{date}.json"), "w", encoding="utf-8") as f:
         json.dump(det, f, ensure_ascii=False)
 
@@ -831,9 +833,18 @@ def _is_done(date):
         return False
     try:
         d = json.load(open(p, encoding="utf-8"))
+        has_price = False
         for v in d.values():
-            return "price" in v
-        return False
+            has_price = "price" in v
+            break
+        if not has_price:
+            return False
+        if INCLUDE_ETF:
+            dp = os.path.join(WEB_DIR, f"detail_{date}.json")
+            if not os.path.exists(dp):
+                return False
+            return bool(json.load(open(dp, encoding="utf-8")).get("_withetf"))
+        return True
     except Exception:
         return False
 

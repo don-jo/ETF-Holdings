@@ -198,7 +198,7 @@ function buildEtfIndexForDate(date){
   const det=(DATA.detail||{})[date]||{};
   const meta=det._etf||{};                       // 압축형: ETF 이름/AUM 모음
   for(const stock in det){
-    if(stock==="_etf")continue;
+    if(stock.startsWith("_"))continue;   // _etf, _withetf 등 메타키 제외
     for(const e of det[stock]){
       const code=(e.e!==undefined)?e.e:e.etf;    // 신형 e / 구형 etf
       const val=(e.v!==undefined)?e.v:e.val;     // 신형 v / 구형 val
