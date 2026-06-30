@@ -58,6 +58,21 @@ if not (os.environ.get("KRX_ID") and os.environ.get("KRX_PW")):
             os.environ["KRX_PW"] = _lines[1]
 KRX_LOGGED_IN = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
 
+# ── (중요) pykrx import 시 로그인하며 세션이 만들어지므로, 그 전에 풀을 키운다 ──
+# HTTPAdapter 기본 풀 크기를 WORKERS(=16)에 맞춰 둔다. 이후 만들어지는 모든
+# requests.Session()이 자동으로 큰 풀을 갖게 되어 'pool is full(size:10)' 경고가 사라짐.
+try:
+    from requests.adapters import HTTPAdapter as _HTTPAdapter_early
+    _POOL_EARLY = 16   # WORKERS와 동일하게 유지
+    _orig_ad_init_early = _HTTPAdapter_early.__init__
+    def _big_ad_init_early(self, *a, **kw):
+        kw.setdefault("pool_connections", _POOL_EARLY)
+        kw.setdefault("pool_maxsize", _POOL_EARLY)
+        return _orig_ad_init_early(self, *a, **kw)
+    _HTTPAdapter_early.__init__ = _big_ad_init_early
+except Exception:
+    pass
+
 from pykrx import stock
 from pykrx.website.krx.etx.core import 전종목시세_ETF
 
@@ -92,15 +107,6 @@ try:
     from requests.adapters import HTTPAdapter as _HTTPAdapter
     from pykrx.website.comm import auth as _auth
     _POOL = max(WORKERS, 10)
-
-    # (1) 가장 확실한 방법: HTTPAdapter가 만들어질 때 풀 기본값을 _POOL로.
-    #     requests.Session()이 새로 생길 때마다 자동으로 큰 풀이 끼워진다.
-    _orig_ad_init = _HTTPAdapter.__init__
-    def _big_ad_init(self, *a, **kw):
-        kw.setdefault("pool_connections", _POOL)
-        kw.setdefault("pool_maxsize", _POOL)
-        return _orig_ad_init(self, *a, **kw)
-    _HTTPAdapter.__init__ = _big_ad_init
 
     def _mount_big_pool(_sess):
         _ad = _HTTPAdapter(pool_connections=_POOL, pool_maxsize=_POOL, max_retries=0)
