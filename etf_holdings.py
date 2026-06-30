@@ -409,15 +409,23 @@ def build_name_map(tickers):
     cache_path = os.path.join(CACHE_DIR, "names.json")
     names = {}
     if os.path.exists(cache_path):
-        with open(cache_path, encoding="utf-8") as f:
-            names = json.load(f)
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                names = json.load(f)
+        except Exception:
+            names = {}   # 캐시가 깨졌으면 새로 시작
+    # 문자열이 아닌 잘못된 값은 버림(과거 버그로 섞였을 수 있음)
+    names = {k: v for k, v in names.items() if isinstance(v, str)}
     missing = [t for t in tickers if t not in names]
 
     def _nm(t):
         try:
-            return t, stock.get_market_ticker_name(t)
+            nm = stock.get_market_ticker_name(t)
+            if isinstance(nm, str) and nm:
+                return t, nm
         except Exception:
-            return t, t
+            pass
+        return t, t   # ETF 등 종목명이 안 나오면 코드로 대체(뒤에서 ETF명 보강)
 
     if missing:
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
