@@ -68,7 +68,7 @@ from pykrx.website.krx.etx.core import 전종목시세_ETF
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-WORKERS = 10       # 동시요청(pykrx 연결풀 최대치). 11+ 이면 pool full 경고.
+WORKERS = 16       # 동시요청. 아래에서 연결풀도 같은 크기로 키움.
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
 SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
@@ -84,6 +84,18 @@ CACHE_DIR = os.path.join(OUTPUT_DIR, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 WEB_DIR = os.path.join(OUTPUT_DIR, "data")   # 웹용 json 출력 폴더
 os.makedirs(WEB_DIR, exist_ok=True)
+
+# ── pykrx 연결풀을 WORKERS 크기로 확장 (기본 10 제한 해제) ──
+try:
+    from requests.adapters import HTTPAdapter as _HTTPAdapter
+    from pykrx.website.comm import webio as _webio
+    _poolsz = max(WORKERS, 10)
+    _adapter = _HTTPAdapter(pool_connections=_poolsz, pool_maxsize=_poolsz, max_retries=0)
+    _sess = _webio.get_session()
+    _sess.mount("https://", _adapter)
+    _sess.mount("http://", _adapter)
+except Exception:
+    pass
 
 
 # ============================================================
