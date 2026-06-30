@@ -830,6 +830,9 @@ def trading_days_of_year(year):
             out.append(d.strftime("%Y%m%d"))
         except Exception:
             out.append(str(d).replace("-", "")[:8])
+    # 오늘 날짜는 제외(장중/당일분은 --year 배치에서 받지 않음)
+    _today = dt.date.today().strftime("%Y%m%d")
+    out = [d for d in out if d < _today]
     return sorted(set(out))
 
 
