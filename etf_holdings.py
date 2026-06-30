@@ -86,14 +86,30 @@ WEB_DIR = os.path.join(OUTPUT_DIR, "data")   # 웹용 json 출력 폴더
 os.makedirs(WEB_DIR, exist_ok=True)
 
 # ── pykrx 연결풀을 WORKERS 크기로 확장 (기본 10 제한 해제) ──
+# pykrx는 로그인(refresh)마다 requests.Session()을 새로 만들어 풀이 10으로
+# 초기화된다. refresh 직후 큰 풀 어댑터를 매번 다시 끼워 16 동시연결을 보장.
 try:
     from requests.adapters import HTTPAdapter as _HTTPAdapter
-    from pykrx.website.comm import webio as _webio
-    _poolsz = max(WORKERS, 10)
-    _adapter = _HTTPAdapter(pool_connections=_poolsz, pool_maxsize=_poolsz, max_retries=0)
-    _sess = _webio.get_session()
-    _sess.mount("https://", _adapter)
-    _sess.mount("http://", _adapter)
+    from pykrx.website.comm import auth as _auth
+    _POOL = max(WORKERS, 10)
+
+    def _mount_big_pool(_sess):
+        _ad = _HTTPAdapter(pool_connections=_POOL, pool_maxsize=_POOL, max_retries=0)
+        _sess.mount("https://", _ad)
+        _sess.mount("http://", _ad)
+
+    _orig_refresh = _auth.KRXSession.refresh
+
+    def _patched_refresh(self, login_id, login_pw):
+        try:
+            return _orig_refresh(self, login_id, login_pw)
+        finally:
+            try:
+                _mount_big_pool(self.session)
+            except Exception:
+                pass
+
+    _auth.KRXSession.refresh = _patched_refresh
 except Exception:
     pass
 
