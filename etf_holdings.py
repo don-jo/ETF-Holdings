@@ -405,7 +405,7 @@ def aggregate_for_date(date, mcap_index):
     return agg, detail
 
 
-def build_name_map(tickers):
+def build_name_map(tickers, known=None):
     cache_path = os.path.join(CACHE_DIR, "names.json")
     names = {}
     if os.path.exists(cache_path):
@@ -416,6 +416,9 @@ def build_name_map(tickers):
             names = {}   # 캐시가 깨졌으면 새로 시작
     # 문자열이 아닌 잘못된 값은 버림(과거 버그로 섞였을 수 있음)
     names = {k: v for k, v in names.items() if isinstance(v, str)}
+    # 미리 아는 이름(ETF 등)은 조회 없이 채움 → pykrx의 ETF 종목명 조회 스팸 방지
+    if known:
+        names.update({k: v for k, v in known.items() if isinstance(v, str) and v})
     missing = [t for t in tickers if t not in names]
 
     def _nm(t):
@@ -902,11 +905,11 @@ def _crawl_one(date):
         agg, detail = aggregate_for_date(date, set(mcap.index))
     except ThrottledError:
         return False
-    names = build_name_map(set(agg.index))
-    if etf_univ:   # ETF 보유분 이름 보강
-        for c in agg.index:
-            if c in etf_univ and names.get(c, c) == c:
-                names[c] = etf_univ[c]["name"]
+    known = None
+    if etf_univ:   # ETF 보유분 이름은 미리 알고 있으니 조회 생략
+        known = {c: etf_univ[c]["name"] for c in etf_univ
+                 if isinstance(etf_univ[c].get("name"), str) and etf_univ[c]["name"]}
+    names = build_name_map(set(agg.index), known=known)
     update_web_data(date, agg, mcap, detail, names)
     print(f"  웹 데이터 갱신 완료 ({date})")
     return True
