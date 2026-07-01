@@ -89,7 +89,10 @@ except Exception as _imp_e:
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-WORKERS = 16       # 동시요청. 아래에서 연결풀도 같은 크기로 키움.
+# 동시요청(시간대 자동조절): 장 시간대(08~16시)엔 KRX throttle가 심해 10으로,
+# 그 외(새벽/밤)엔 16으로. 배치마다 새로 실행되므로 그 시각 기준으로 정해진다.
+_now_hour = dt.datetime.now().hour
+WORKERS = 10 if 8 <= _now_hour < 16 else 16
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
 SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
@@ -112,7 +115,7 @@ os.makedirs(WEB_DIR, exist_ok=True)
 try:
     from requests.adapters import HTTPAdapter as _HTTPAdapter
     from pykrx.website.comm import auth as _auth
-    _POOL = max(WORKERS, 10)
+    _POOL = 16
 
     def _mount_big_pool(_sess):
         _ad = _HTTPAdapter(pool_connections=_POOL, pool_maxsize=_POOL, max_retries=0)
