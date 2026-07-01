@@ -63,7 +63,7 @@ KRX_LOGGED_IN = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
 # requests.Session()이 자동으로 큰 풀을 갖게 되어 'pool is full(size:10)' 경고가 사라짐.
 try:
     from requests.adapters import HTTPAdapter as _HTTPAdapter_early
-    _POOL_EARLY = 16   # WORKERS와 동일하게 유지
+    _POOL_EARLY = 10   # WORKERS와 동일하게 유지
     _orig_ad_init_early = _HTTPAdapter_early.__init__
     def _big_ad_init_early(self, *a, **kw):
         kw.setdefault("pool_connections", _POOL_EARLY)
@@ -89,10 +89,8 @@ except Exception as _imp_e:
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-# 동시요청(시간대 자동조절): 장 시간대(08~16시)엔 KRX throttle가 심해 10으로,
-# 그 외(새벽/밤)엔 16으로. 배치마다 새로 실행되므로 그 시각 기준으로 정해진다.
-_now_hour = dt.datetime.now().hour
-WORKERS = 10 if 8 <= _now_hour < 16 else 16
+# 동시요청: IP 차단 이후 안전하게 10 고정(요청 속도를 낮춰 throttle 회피).
+WORKERS = 10
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
 SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
@@ -115,7 +113,7 @@ os.makedirs(WEB_DIR, exist_ok=True)
 try:
     from requests.adapters import HTTPAdapter as _HTTPAdapter
     from pykrx.website.comm import auth as _auth
-    _POOL = 16
+    _POOL = 10
 
     def _mount_big_pool(_sess):
         _ad = _HTTPAdapter(pool_connections=_POOL, pool_maxsize=_POOL, max_retries=0)
