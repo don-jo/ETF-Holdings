@@ -73,8 +73,14 @@ try:
 except Exception:
     pass
 
-from pykrx import stock
-from pykrx.website.krx.etx.core import 전종목시세_ETF
+try:
+    from pykrx import stock
+    from pykrx.website.krx.etx.core import 전종목시세_ETF
+except Exception as _imp_e:
+    # KRX가 로그인 응답을 HTML(차단페이지)로 주면 여기서 터진다 = throttle.
+    # 종료코드 3으로 나가면 bat이 40분 쉬었다 재시도한다(무한 15초 재시도 방지).
+    print("KRX 초기화/로그인 실패(throttle 의심) - 40분 쉬었다 재시도:", _imp_e)
+    sys.exit(3)
 
 # ============================================================
 # CONFIG  (여기만 바꾸면 됨)
@@ -90,7 +96,7 @@ SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
 ASK_DATES = True   # (현재 미사용) 호환용
 REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
 BATCH_PER_RUN = 1      # 한 번 실행에 1일치만(매 날짜 새 로그인 → 세션 만료 회피)
-FAIL_RATIO_LIMIT = 0.15  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
+FAIL_RATIO_LIMIT = 0.05  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
 MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
 WRITE_CACHE = False # 집계 캐시(.pkl) 저장 안 함. 이어받기는 웹파일 기준이라 불필요+디스크 낭비 방지.
 
