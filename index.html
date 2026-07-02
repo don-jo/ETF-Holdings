@@ -89,6 +89,7 @@
         <button onclick="doLookup()">조회</button>
         <span class="hint" id="lkHint"></span>
       </div>
+      <div class="hint" style="margin-top:6px">ETF보유비중 = 시총 대비 전체 ETF 보유 · ETF내 비중 = 각 ETF 포트폴리오 안에서 이 종목의 비중</div>
       <div id="lkSummary" class="summary"></div>
       <div id="lkTableWrap" class="tablewrap" style="display:none;margin-top:10px"></div>
     </div>
@@ -108,6 +109,7 @@
           </select>
         </div>
       </div>
+      <div class="hint" style="margin-top:8px">ETF보유비중% = 종목 시총 대비 전체 ETF가 보유한 비율 (Σ ETF보유액 ÷ 시총)</div>
       <div class="tablewrap" style="margin-top:10px"><table id="marketTable"></table></div>
     </div>
   </section>
@@ -143,6 +145,22 @@
     </div>
   </section>
 </main>
+
+<footer style="margin:20px auto 40px;padding:0 16px;max-width:1200px;font-size:13px;color:var(--muted)">
+  <div style="margin-bottom:6px"><b>데이터 출처: KRX 정보데이터시스템</b> (data.krx.co.kr)</div>
+  <details>
+    <summary style="cursor:pointer">📌 계산 방식 · 예외 처리 (펼치기)</summary>
+    <div style="margin-top:8px;line-height:1.8">
+      • <b>ETF보유액</b> = 각 ETF 순자산(AUM) × 그 종목의 ETF내 비중(PDF 비중). 그 종목을 담은 모든 ETF에 걸쳐 합산.<br>
+      • <b>ETF보유비중%</b> <span class="muted">(시장전체 탭 · 조회 탭 상단)</span> = Σ(ETF보유액) ÷ 종목 시가총액 × 100. <b>시총 대비</b> 전체 ETF가 보유한 비율.<br>
+      • <b>ETF내 비중%</b> <span class="muted">(조회 탭 표)</span> = 그 <b>ETF 포트폴리오 안</b>에서 이 종목이 차지하는 비중(KRX 원자료).<br>
+      • <b>계약수</b> = ETF PDF의 1CU(설정단위)당 보유 수량. 주가·자금유출입과 무관해 전략변화 탭의 증량/감량 판정에 사용.<br>
+      • <b>제외 항목</b>: 시총 대비 계산은 <u>국내 상장 개별주식만</u> 집계. 해외주식·채권·선물·외화현금 등 국내 시총이 없는 항목은 제외(비중 왜곡 방지). 원화현금은 보유액엔 포함(계약수 없음). 다른 ETF 보유분(ETF-in-ETF)은 2025·2024는 포함, 2026은 미포함.<br>
+      • <b>단위·오차</b>: 금액은 억원. KRX 비중이 소수 2자리 반올림이라 미세한 오차가 있을 수 있음.<br>
+      <span class="muted">※ 공개 데이터를 개인·연구 목적으로 재구성한 자료입니다.</span>
+    </div>
+  </details>
+</footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script>
@@ -285,11 +303,11 @@ function renderMarket(){
   const bd=fmtDate(dval(baseSel)),cd=fmtDate(dval(cmpSel));
   const cols=[
     {k:"code",t:"코드",cls:"l"},{k:"name",t:"종목명",cls:"l name"},
-    {k:"wCur",t:`편입%<br><span class="muted">${bd}</span>`,f:"pct"},
-    {k:"wCmp",t:`편입%<br><span class="muted">${cd}</span>`,f:"pct"},
+    {k:"wCur",t:`ETF보유비중%<br><span class="muted">${bd}</span>`,f:"pct"},
+    {k:"wCmp",t:`ETF보유비중%<br><span class="muted">${cd}</span>`,f:"pct"},
     {k:"dW",t:"비중변화<br>(%p)",f:"pctsign"},
-    {k:"valCur",t:`보유액(억)<br><span class="muted">${bd}</span>`,f:"won"},
-    {k:"valCmp",t:`보유액(억)<br><span class="muted">${cd}</span>`,f:"won"},
+    {k:"valCur",t:`ETF보유액(억)<br><span class="muted">${bd}</span>`,f:"won"},
+    {k:"valCmp",t:`ETF보유액(억)<br><span class="muted">${cd}</span>`,f:"won"},
     {k:"dVal",t:"증감<br>(억)",f:"wonsign"},
     {k:"mcapCur",t:"시총(억)",f:"won"},{k:"nCur",t:"보유<br>ETF수",f:"int"}
   ];
@@ -342,9 +360,9 @@ async function doLookup(){
   lkHint.textContent="";
   lkSummary.innerHTML=`
     <div class="kpi"><div class="v">${(b||c).name}</div><div class="k">${code}</div></div>
-    <div class="kpi"><div class="v">${pct(wCur)}%</div><div class="k">편입비중 · ${bd}</div></div>
+    <div class="kpi"><div class="v">${pct(wCur)}%</div><div class="k">ETF보유비중(시총대비) · ${bd}</div></div>
     <div class="kpi"><div class="v ${sCls(wCur-wCmp)}">${sTxt(wCur-wCmp,'pct')}%p</div><div class="k">${cd} 대비</div></div>
-    <div class="kpi"><div class="v">${won(b?b.val:0)}억</div><div class="k">ETF 보유액 · ${bd}</div></div>
+    <div class="kpi"><div class="v">${won(b?b.val:0)}억</div><div class="k">ETF보유액(합계) · ${bd}</div></div>
     <div class="kpi"><div class="v">${b?b.n:0}개</div><div class="k">보유 ETF 수</div></div>`;
   const metaB=etfMeta[base]||{}, metaC=etfMeta[cmp]||{};
   const ec=e=>(e.e!==undefined)?e.e:e.etf;          // ETF코드
@@ -367,10 +385,10 @@ function renderLkTable(){
     {k:"etf",t:"ETF코드",cls:"l"},
     {k:"name",t:"ETF명",cls:"l name"},
     {k:"aum",t:"AUM(억)",f:"won"},
-    {k:"wCur",t:`비중%<br><span class="muted">${lkBd}</span>`,f:"pct"},
-    {k:"valCur",t:`보유(억)<br><span class="muted">${lkBd}</span>`,f:"won"},
-    {k:"wCmp",t:`비중%<br><span class="muted">${lkCd}</span>`,f:"pct"},
-    {k:"valCmp",t:`보유(억)<br><span class="muted">${lkCd}</span>`,f:"won"},
+    {k:"wCur",t:`ETF내 비중%<br><span class="muted">${lkBd}</span>`,f:"pct"},
+    {k:"valCur",t:`ETF보유액(억)<br><span class="muted">${lkBd}</span>`,f:"won"},
+    {k:"wCmp",t:`ETF내 비중%<br><span class="muted">${lkCd}</span>`,f:"pct"},
+    {k:"valCmp",t:`ETF보유액(억)<br><span class="muted">${lkCd}</span>`,f:"won"},
     {k:"dVal",t:"증감(억)",f:"wonsign"},
     {k:"status",t:"상태",cls:"l"}
   ];
@@ -509,8 +527,7 @@ function renderStrat(){
     if(x==null)x=-Infinity; if(y==null)y=-Infinity;
     if(typeof x==="string"||typeof y==="string")return stratSort.dir<0?String(y).localeCompare(String(x)):String(x).localeCompare(String(y));
     return stratSort.dir<0?y-x:x-y;});
-  const ind=stratSort.dir<0?"▼":"▲";
-  const tagCls={"신규":"신규","증량":"증가","감량":"감소","매수":"증가","매도":"감소","제외":"제외","유지":"유지","-":"유지"};
+  const ind=stratSort.dir<0?"▼":"▲";  const tagCls={"신규":"신규","증량":"증가","감량":"감소","매수":"증가","매도":"감소","제외":"제외","유지":"유지","-":"유지"};
   const tagLab={"신규":"신규","증량":"↑증량","감량":"↓감량","매수":"↑매수(추정)","매도":"↓매도(추정)","제외":"제외","유지":"– 유지","-":"–"};
   const modeNote=usingQ
     ?`<div class="hint" style="margin-bottom:6px">✅ 계약수(1CU당 보유수량) 변화 기준 — 증량·감량·편출입 확정</div>`
