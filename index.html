@@ -135,7 +135,7 @@
       <div class="row">
         <input id="stratInput" list="etflist" placeholder="ETF명 또는 코드 (예: TIGER ...액티브)" style="min-width:300px">
         <button onclick="setStrat()">선택</button>
-        <span class="hint">추정매매 = 보유액변화율이 시총(주가)변화율보다 크면 매수, 작으면 매도</span>
+        <span class="hint">판정 = 계약수(1CU당 보유수량) 변화 기준(확정). 계약수 없는 구간은 보유액/시총 추정으로 대체.</span>
       </div>
       <div id="stratChip" class="row" style="margin-top:8px"></div>
       <div id="stratSummary" class="summary"></div>
@@ -204,7 +204,7 @@ function buildEtfIndexForDate(date){
       const val=(e.v!==undefined)?e.v:e.val;     // 신형 v / 구형 val
       const m=meta[code]||{name:e.name,aum:e.aum};
       etfMeta[date][code]={name:m.name,aum:m.aum};
-      (etfHold[date][code]=etfHold[date][code]||{})[stock]={w:e.w,val:val};
+      (etfHold[date][code]=etfHold[date][code]||{})[stock]={w:e.w,val:val,q:(e.q!==undefined?e.q:null)};
     }
   }
 }
@@ -457,22 +457,35 @@ function renderStrat(){
   const aumB=((etfMeta[base]||{})[e]||{}).aum||0, aumC=((etfMeta[cmp]||{})[e]||{}).aum||0;
   const sb=DATA.stocks[base]||{}, sc=DATA.stocks[cmp]||{};
   const codes=new Set([...Object.keys(hb),...Object.keys(hc)]);
+  // 두 날짜 모두 계약수(q)가 있으면 계약수 기준(확정), 아니면 보유액/시총 추정(fallback)
+  const qOk=d=>Object.values(d).some(x=>x&&x.q!=null);
+  const usingQ=qOk(hb)&&qOk(hc);
   let newN=0,outN=0;
   const rows=[];
   codes.forEach(s2=>{
     const wB=(hb[s2]||{}).w||0, wC=(hc[s2]||{}).w||0;
     const vB=(hb[s2]||{}).val||0, vC=(hc[s2]||{}).val||0;
     const mB=(sb[s2]||{}).mcap||0, mC=(sc[s2]||{}).mcap||0;
-    let valGrow=null, mcapGrow=null, trade;
-    if(vC<=0&&vB>0){trade="신규";newN++;}
-    else if(vB<=0&&vC>0){trade="제외";outN++;}
-    else{
-      valGrow=vC>0?(vB/vC-1)*100:null;
-      mcapGrow=(mB>0&&mC>0)?(mB/mC-1)*100:null;
-      if(valGrow!=null&&mcapGrow!=null){const d=valGrow-mcapGrow;trade=d>2?"매수":(d<-2?"매도":"유지");}
-      else trade="-";
+    let valGrow=null, mcapGrow=null, qB=null, qC=null, qGrow=null, trade;
+    if(usingQ){
+      qB=(hb[s2]||{}).q||0; qC=(hc[s2]||{}).q||0;
+      if(qC<=0&&qB>0){trade="신규";newN++;}
+      else if(qB<=0&&qC>0){trade="제외";outN++;}
+      else if(qB>qC)trade="증량";
+      else if(qB<qC)trade="감량";
+      else trade="유지";
+      qGrow=qC>0?(qB/qC-1)*100:null;
+    } else {
+      if(vC<=0&&vB>0){trade="신규";newN++;}
+      else if(vB<=0&&vC>0){trade="제외";outN++;}
+      else{
+        valGrow=vC>0?(vB/vC-1)*100:null;
+        mcapGrow=(mB>0&&mC>0)?(mB/mC-1)*100:null;
+        if(valGrow!=null&&mcapGrow!=null){const d=valGrow-mcapGrow;trade=d>2?"매수":(d<-2?"매도":"유지");}
+        else trade="-";
+      }
     }
-    rows.push({code:s2,name:sname(base,s2)||sname(cmp,s2)||s2,wB,wC,dW:wB-wC,vB,valGrow,mcapGrow,trade});
+    rows.push({code:s2,name:sname(base,s2)||sname(cmp,s2)||s2,wB,wC,dW:wB-wC,vB,valGrow,mcapGrow,qB,qC,dQ:(qB!=null&&qC!=null)?qB-qC:null,qGrow,trade});
   });
   stratSummary.innerHTML=`
     <div class="kpi"><div class="v">${won(aumB)}억</div><div class="k">AUM · ${bd}</div></div>
@@ -486,26 +499,31 @@ function renderStrat(){
     {k:"wB",t:`비중%<br><span class="muted">${bd}</span>`,f:"pct"},
     {k:"wC",t:`비중%<br><span class="muted">${cd}</span>`,f:"pct"},
     {k:"dW",t:"비중변화<br>(%p)",f:"pctsign"},
-    {k:"vB",t:`보유액(억)<br><span class="muted">${bd}</span>`,f:"won"},
-    {k:"valGrow",t:"보유액<br>변화율%",f:"pctsign"},
-    {k:"mcapGrow",t:"시총(주가)<br>변화율%",f:"pctsign"},
-    {k:"trade",t:"추정매매",cls:"l"}
+    {k:"qB",t:`계약수<br><span class="muted">${bd}</span>`,f:"won"},
+    {k:"qC",t:`계약수<br><span class="muted">${cd}</span>`,f:"won"},
+    {k:"dQ",t:"계약수<br>변화",f:"wonsign"},
+    {k:"qGrow",t:"계약수<br>변화율%",f:"pctsign"},
+    {k:"trade",t:"판정",cls:"l"}
   ];
   const rws=[...rows].sort((a,b)=>{let x=a[stratSort.key],y=b[stratSort.key];
     if(x==null)x=-Infinity; if(y==null)y=-Infinity;
     if(typeof x==="string"||typeof y==="string")return stratSort.dir<0?String(y).localeCompare(String(x)):String(x).localeCompare(String(y));
     return stratSort.dir<0?y-x:x-y;});
   const ind=stratSort.dir<0?"▼":"▲";
-  const tagCls={"신규":"신규","매수":"증가","매도":"감소","제외":"제외","유지":"유지","-":"유지"};
-  const tagLab={"신규":"신규","매수":"↑매수","매도":"↓매도","제외":"제외","유지":"– 유지","-":"–"};
-  let h="<table><thead><tr><th class='l'>#</th>"+cols.map(c=>{const act=c.k===stratSort.key;
+  const tagCls={"신규":"신규","증량":"증가","감량":"감소","매수":"증가","매도":"감소","제외":"제외","유지":"유지","-":"유지"};
+  const tagLab={"신규":"신규","증량":"↑증량","감량":"↓감량","매수":"↑매수(추정)","매도":"↓매도(추정)","제외":"제외","유지":"– 유지","-":"–"};
+  const modeNote=usingQ
+    ?`<div class="hint" style="margin-bottom:6px">✅ 계약수(1CU당 보유수량) 변화 기준 — 증량·감량·편출입 확정</div>`
+    :`<div class="hint" style="margin-bottom:6px">⚠️ 이 구간은 계약수 데이터가 없어 <b>보유액/시총 추정</b>으로 표시합니다(매수·매도 = 추정, 계약수 열은 –).</div>`;
+  let h=modeNote+"<table><thead><tr><th class='l'>#</th>"+cols.map(c=>{const act=c.k===stratSort.key;
     return `<th class="${c.cls||''}${act?' active':''}" data-k="${c.k}">${c.t}${act?`<span class="sortind">${ind}</span>`:""}</th>`;}).join("")+"</tr></thead><tbody>";
   rws.forEach((r,i)=>{
     h+=`<tr><td class="l muted">${i+1}</td>`+cols.map(c=>{
       let v=r[c.k];
       if(c.k==="trade")return `<td class="l"><span class="tag ${tagCls[v]||'유지'}">${tagLab[v]||v}</span></td>`;
       if(c.f==="pct")return `<td>${v==null?"-":pct(v)}</td>`;
-      if(c.f==="won")return `<td>${won(v)}</td>`;
+      if(c.f==="won")return `<td>${v==null?"-":won(v)}</td>`;
+      if(c.f==="wonsign")return `<td class="${sCls(v)}">${v==null?"-":(v>0?"+":"")+won(v)}</td>`;
       if(c.f==="pctsign")return `<td class="${sCls(v)}">${v==null?"-":sTxt(v,'pct')}</td>`;
       return `<td class="${c.cls||''}">${v}</td>`;
     }).join("")+"</tr>";
