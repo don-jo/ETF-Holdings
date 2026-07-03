@@ -289,8 +289,11 @@ function buildFull(){
   const base=dval(baseSel),cmp=dval(cmpSel);
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
   const codes=new Set([...Object.keys(sb),...Object.keys(sc)]);
+  // 시장전체는 개별주식만: ETF-in-ETF로 유니버스에 섞인 ETF 코드(detail._etf)는 제외
+  const etfSet=new Set([...Object.keys((DATA.detail[base]||{})._etf||{}),...Object.keys((DATA.detail[cmp]||{})._etf||{})]);
   const rows=[];
   codes.forEach(code=>{
+    if(etfSet.has(code))return;   // ETF는 시장전체에서 뺀다(개별종목만)
     const b=sb[code],c=sc[code];
     const mcapCur=b?b.mcap:0,valCur=b?b.val:0,mcapCmp=c?c.mcap:0,valCmp=c?c.val:0;
     const wCur=mcapCur>0?valCur/mcapCur*100:0,wCmp=mcapCmp>0?valCmp/mcapCmp*100:0;
