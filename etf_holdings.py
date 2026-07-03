@@ -896,6 +896,25 @@ def trading_days_of_year(year):
     return sorted(set(out))
 
 
+def _merge_etf_codes(codes):
+    """상장 ETF 전체 코드를 data/etf_codes.json에 누적 저장(웹 시장전체 탭 필터용).
+    보유내용과 무관한 '진짜 ETF 명단'이라 채권형 ETF도 확실히 걸러진다."""
+    p = os.path.join(WEB_DIR, "etf_codes.json")
+    cur = set()
+    if os.path.exists(p):
+        try:
+            cur = set(json.load(open(p, encoding="utf-8")))
+        except Exception:
+            cur = set()
+    new = cur | {str(c) for c in codes if c}
+    if new != cur:
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(sorted(new), f, ensure_ascii=False)
+        except Exception:
+            pass
+
+
 def _crawl_one(date):
     """한 날짜 수집+웹저장. 성공 True / throttle·실패 False."""
     mcap = get_market_cap(date)
@@ -906,6 +925,7 @@ def _crawl_one(date):
     if INCLUDE_ETF:   # ETF를 '종목'처럼 시총 유니버스에 합쳐 ETF-in-ETF 보유도 잡음
         etf_univ = get_etf_universe(date)
         if etf_univ:
+            _merge_etf_codes(etf_univ.keys())   # 전체 ETF 명단 갱신
             add = {c: v for c, v in etf_univ.items()
                    if c not in mcap.index and v["시가총액"] > 0}
             if add:

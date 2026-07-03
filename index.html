@@ -192,6 +192,7 @@ let DATA=SAMPLE, activeTab="stock", sortKey="wCur", sortDir=-1, etfSel=[];
 let lkArr=[], lkSort={key:"valCur",dir:-1}, lkBd="", lkCd="";
 let etfMeta={}, etfHold={};  // [date][etf]={name,aum}  /  [date][etf]={stock:{w,val}}
 let stratSel=null, stratSort={key:"wB",dir:-1};
+let ETFCODES=new Set();  // 상장 ETF 전체 코드(시장전체 탭에서 제외용)
 
 const won=v=>(v==null||isNaN(v))?"-":Math.round(v).toLocaleString();
 const pct=v=>(v==null||isNaN(v))?"-":(+v).toFixed(2);
@@ -290,7 +291,7 @@ function buildFull(){
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
   const codes=new Set([...Object.keys(sb),...Object.keys(sc)]);
   // 시장전체는 개별주식만: ETF-in-ETF로 유니버스에 섞인 ETF 코드(detail._etf)는 제외
-  const etfSet=new Set([...Object.keys((DATA.detail[base]||{})._etf||{}),...Object.keys((DATA.detail[cmp]||{})._etf||{})]);
+  const etfSet=new Set([...ETFCODES,...Object.keys((DATA.detail[base]||{})._etf||{}),...Object.keys((DATA.detail[cmp]||{})._etf||{})]);
   const rows=[];
   codes.forEach(code=>{
     if(etfSet.has(code))return;   // ETF는 시장전체에서 뺀다(개별종목만)
@@ -554,6 +555,7 @@ function renderStrat(){
   });
 }
 
+fetch("data/etf_codes.json").then(r=>r.ok?r.json():[]).then(a=>{ETFCODES=new Set(a);if(activeTab==="market")renderMarket();}).catch(()=>{});
 fetch("data/data.json").then(r=>{if(!r.ok)throw 0;return r.json();}).then(j=>{DATA=j;DATA.detail=DATA.detail||{};DATA.stocks=DATA.stocks||{};init();}).catch(()=>{DATA=SAMPLE;init();});
 </script>
 </body>
