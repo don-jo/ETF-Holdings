@@ -87,6 +87,7 @@
         <input id="q" list="stocklist" placeholder="종목코드(005930) 또는 종목명" style="min-width:260px">
         <datalist id="stocklist"></datalist>
         <button onclick="doLookup()">조회</button>
+        <button class="ghost" onclick="downloadXlsx('stock')">⬇ 엑셀</button>
         <span class="hint" id="lkHint"></span>
       </div>
       <div class="hint" style="margin-top:6px">ETF보유비중 = 시총 대비 전체 ETF 보유 · ETF내 비중 = 각 ETF 포트폴리오 안에서 이 종목의 비중</div>
@@ -108,6 +109,7 @@
             <option value="50">상위 50</option><option value="100" selected>상위 100</option><option value="0">전체</option>
           </select>
         </div>
+        <button class="ghost" onclick="downloadXlsx('market')">⬇ 엑셀</button>
       </div>
       <div class="hint" style="margin-top:8px">ETF보유비중% = 종목 시총 대비 전체 ETF가 보유한 비율 (Σ ETF보유액 ÷ 시총)</div>
       <div class="tablewrap" style="margin-top:10px"><table id="marketTable"></table></div>
@@ -122,6 +124,7 @@
         <input id="etfInput" list="etflist" placeholder="ETF명 또는 코드 (예: KODEX 200)" style="min-width:280px">
         <datalist id="etflist"></datalist>
         <button onclick="addEtf()">추가</button>
+        <button class="ghost" onclick="downloadXlsx('etf')">⬇ 엑셀</button>
         <span class="hint">최대 5개</span>
       </div>
       <div id="etfChips" class="row" style="margin-top:10px"></div>
@@ -137,6 +140,7 @@
       <div class="row">
         <input id="stratInput" list="etflist" placeholder="ETF명 또는 코드 (예: TIGER ...액티브)" style="min-width:300px">
         <button onclick="setStrat()">선택</button>
+        <button class="ghost" onclick="downloadXlsx('strat')">⬇ 엑셀</button>
         <span class="hint">판정 = 계약수(1CU당 보유수량) 변화 기준(확정). 계약수 없는 구간은 보유액/시총 추정으로 대체.</span>
       </div>
       <div id="stratChip" class="row" style="margin-top:8px"></div>
@@ -163,6 +167,7 @@
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const SAMPLE = {
   generated:"샘플 데이터 (실제 데이터는 크롤러가 생성한 data.json)",
@@ -193,6 +198,17 @@ let lkArr=[], lkSort={key:"valCur",dir:-1}, lkBd="", lkCd="";
 let etfMeta={}, etfHold={};  // [date][etf]={name,aum}  /  [date][etf]={stock:{w,val}}
 let stratSel=null, stratSort={key:"wB",dir:-1};
 let ETFCODES=new Set();  // 상장 ETF 전체 코드(시장전체 탭에서 제외용)
+let EXPORTS={}, lkStockName="";
+const XLround=(v,d)=>{d=(d==null?2:d);return (v==null||isNaN(v))?"":Math.round(v*Math.pow(10,d))/Math.pow(10,d);};
+function downloadXlsx(tab){
+  const E=EXPORTS[tab];
+  if(!E||!E.rows||!E.rows.length){alert("먼저 데이터를 조회/선택하세요.");return;}
+  if(typeof XLSX==="undefined"){alert("엑셀 라이브러리 로딩 중… 잠시 후 다시 눌러주세요.");return;}
+  const ws=XLSX.utils.aoa_to_sheet([E.headers,...E.rows]);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,(E.name||"data").slice(0,31));
+  XLSX.writeFile(wb,E.file||"data.xlsx");
+}
 
 const won=v=>(v==null||isNaN(v))?"-":Math.round(v).toLocaleString();
 const pct=v=>(v==null||isNaN(v))?"-":(+v).toFixed(2);
@@ -338,6 +354,9 @@ function renderMarket(){
     }).join("")+"</tr>";
   });
   marketTable.innerHTML=h+"</tbody>";
+  EXPORTS.market={name:"시장전체",file:`시장전체_${dval(baseSel)}.xlsx`,
+    headers:["코드","종목명",`ETF보유비중%(${bd})`,`ETF보유비중%(${cd})`,"비중변화(%p)",`ETF보유액억(${bd})`,`ETF보유액억(${cd})`,"증감(억)","시총(억)","보유ETF수"],
+    rows:buildFull().map(r=>[r.code,r.name,XLround(r.wCur),XLround(r.wCmp),XLround(r.dW),Math.round(r.valCur),Math.round(r.valCmp),Math.round(r.dVal),Math.round(r.mcapCur),r.nCur||0])};
   marketTable.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
     const k=th.dataset.k; if(sortKey===k)sortDir=-sortDir; else{sortKey=k;sortDir=-1;} renderMarket();
   });
@@ -360,6 +379,7 @@ async function doLookup(){
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
   if(!code||!(sb[code]||sc[code])){lkHint.textContent="해당 종목을 찾을 수 없습니다.";lkSummary.innerHTML="";lkTableWrap.style.display="none";return;}
   const b=sb[code],c=sc[code];
+  lkStockName=((b||c)&&(b||c).name)?(b||c).name:code;
   const wCur=b&&b.mcap?b.val/b.mcap*100:0,wCmp=c&&c.mcap?c.val/c.mcap*100:0;
   lkHint.textContent="";
   lkSummary.innerHTML=`
@@ -413,6 +433,9 @@ function renderLkTable(){
     }).join("")+"</tr>";
   });
   lkTableWrap.innerHTML=h+"</tbody>"; lkTableWrap.style.display="block";
+  EXPORTS.stock={name:"조회",file:`조회_${lkStockName||""}_${dval(baseSel)}.xlsx`,
+    headers:["ETF코드","ETF명","AUM(억)",`ETF내비중%(${lkBd})`,`ETF보유액억(${lkBd})`,`ETF내비중%(${lkCd})`,`ETF보유액억(${lkCd})`,"증감(억)","상태"],
+    rows:lkArr.map(e=>[e.etf,e.name,Math.round(e.aum),XLround(e.wCur),Math.round(e.valCur),XLround(e.wCmp),Math.round(e.valCmp),Math.round(e.dVal),e.status])};
   lkTableWrap.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
     const k=th.dataset.k; if(lkSort.key===k)lkSort.dir=-lkSort.dir; else{lkSort.key=k;lkSort.dir=-1;} renderLkTable();
   });
@@ -459,6 +482,8 @@ function renderEtf(){
         return `<td><div>${pct(wc)}%<span class="d ${sCls(d)}">${sTxt(d,'pct')}</span></div><div class="muted" style="font-size:11px">${won(vc)}억</div></td>`;
       }).join("")+`</tr>`;
   });
+  {const erows=[];[...stocks].forEach(s2=>etfSel.forEach(e=>{const hb=(etfHold[base][e]||{})[s2],hc=(etfHold[cmp][e]||{})[s2];if(!hb&&!hc)return;erows.push([s2,sname(base,s2)||sname(cmp,s2)||s2,e,nameOf(e),XLround(hb?hb.w:0),XLround(hc?hc.w:0),XLround((hb?hb.w:0)-(hc?hc.w:0)),Math.round(hb?hb.val:0),Math.round(hc?hc.val:0),Math.round((etfMeta[base][e]||{}).aum||0)]);}));
+   EXPORTS.etf={name:"ETF비교",file:`ETF비교_${base}.xlsx`,headers:["종목코드","종목명","ETF코드","ETF명",`비중%(${bd})`,`비중%(${cd})`,"비중변화(%p)",`보유액억(${bd})`,`보유액억(${cd})`,"AUM억(분석일)"],rows:erows};}
   etfMatrix.innerHTML=h+`</tbody></table>`; etfMatrix.style.display="block";
 }
 
@@ -550,6 +575,9 @@ function renderStrat(){
     }).join("")+"</tr>";
   });
   stratTableWrap.innerHTML=h+"</tbody>"; stratTableWrap.style.display="block";
+  EXPORTS.strat={name:"전략변화",file:`전략변화_${nameOf(e)}_${base}.xlsx`,
+    headers:["종목코드","종목명",`비중%(${bd})`,`비중%(${cd})`,"비중변화(%p)",`계약수(${bd})`,`계약수(${cd})`,"계약수변화","계약수변화율%","판정"],
+    rows:rows.map(r=>[r.code,r.name,XLround(r.wB),XLround(r.wC),XLround(r.dW),r.qB==null?"":Math.round(r.qB),r.qC==null?"":Math.round(r.qC),r.dQ==null?"":Math.round(r.dQ),r.qGrow==null?"":XLround(r.qGrow),r.trade])};
   stratTableWrap.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
     const k=th.dataset.k; if(stratSort.key===k)stratSort.dir=-stratSort.dir; else{stratSort.key=k;stratSort.dir=-1;} renderStrat();
   });
