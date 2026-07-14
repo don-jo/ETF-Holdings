@@ -4,8 +4,8 @@ cd /d "%~dp0"
 set LOG=%~dp0실행로그.txt
 echo ====================================================>>"%LOG%"
 echo [시작] %date% %time%>>"%LOG%"
-echo [1/2] 크롤링 + 데이터 생성 (--auto) ... 새 거래일이면 20~40분 걸립니다
-python "%~dp0etf_holdings.py" --auto
+echo [1/2] 크롤링 + 데이터 생성 (--auto --withetf) ... 새 거래일이면 20~40분 걸립니다
+python "%~dp0etf_holdings.py" --auto --withetf
 echo [크롤 종료코드 %errorlevel%]>>"%LOG%"
 echo.
 echo [2/2] GitHub 업로드
