@@ -79,13 +79,13 @@
     <div class="tab" data-tab="etf">ETF별 비교</div>
   </div>
   <div style="background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:14px;font-size:12.5px;color:var(--text)">
-    📅 <b>표시 날짜 = PDF 공표일</b>이고, 그 구성은 <b>전 영업일(D-1) 종가 기준 실제 보유</b>예요. 즉 <b>편출·매매는 실제로 표시일의 전 영업일에 실행</b>된 거예요. <span class="muted">(예: 표시 7/15 = 실제 7/14 매매)</span>
+    📅 <b>표시 날짜 = PDF 공표일</b>. 구성은 <b>전 영업일(D-1) 종가 기준 실제 보유</b> → <b>편출·매매는 표시일의 전 영업일에 실행</b>. <span class="muted">(예: 표시 7/15 = 실제 7/14 매매)</span>
   </div>
 
   <!-- 1. 개별종목 조회 -->
   <section id="panel-stock">
     <div class="card">
-      <h2>🔎 종목을 입력하면 그 종목을 보유한 ETF가 나열됩니다</h2>
+      <h2>🔎 종목 입력 → 해당 종목을 보유한 ETF 목록</h2>
       <div class="row">
         <input id="q" list="stocklist" placeholder="종목코드(005930) 또는 종목명" style="min-width:260px">
         <datalist id="stocklist"></datalist>
@@ -105,7 +105,7 @@
       <div class="row" style="justify-content:space-between">
         <div class="row">
           <input id="mFilter" placeholder="종목 검색(이름/코드)" style="min-width:200px" oninput="renderMarket()">
-          <span class="hint">열 머리글을 클릭하면 그 기준으로 정렬됩니다</span>
+          <span class="hint">열 머리글 클릭 → 해당 기준 정렬</span>
         </div>
         <div class="ctrl"><label class="muted">표시</label>
           <select id="topSel" onchange="renderMarket()">
@@ -165,7 +165,7 @@
       • <b>계약수</b> = ETF PDF의 1CU(설정단위)당 보유 수량. 주가·자금유출입과 무관해 전략변화 탭의 증량/감량 판정에 사용.<br>
       • <b>제외 항목</b>: 시총 대비 계산은 <u>국내 상장 개별주식만</u> 집계. 해외주식·채권·선물·외화현금 등 국내 시총이 없는 항목은 제외(비중 왜곡 방지). 원화현금은 보유액엔 포함(계약수 없음). 다른 ETF 보유분(ETF-in-ETF)은 <b>2025·2026 전 기간 포함</b>.<br>
       • <b>단위·오차</b>: 금액은 억원. KRX 비중이 소수 2자리 반올림이라 미세한 오차가 있을 수 있음.<br>
-      <span class="muted">※ 공개 데이터를 개인·연구 목적으로 재구성한 자료입니다.</span>
+      <span class="muted">※ 공개 데이터를 개인·연구 목적으로 재구성.</span>
     </div>
   </details>
 </footer>
@@ -206,8 +206,8 @@ let EXPORTS={}, lkStockName="";
 const XLround=(v,d)=>{d=(d==null?2:d);return (v==null||isNaN(v))?"":Math.round(v*Math.pow(10,d))/Math.pow(10,d);};
 function downloadXlsx(tab){
   const E=EXPORTS[tab];
-  if(!E||!E.rows||!E.rows.length){alert("먼저 데이터를 조회/선택하세요.");return;}
-  if(typeof XLSX==="undefined"){alert("엑셀 라이브러리 로딩 중… 잠시 후 다시 눌러주세요.");return;}
+  if(!E||!E.rows||!E.rows.length){alert("데이터를 먼저 조회/선택.");return;}
+  if(typeof XLSX==="undefined"){alert("엑셀 라이브러리 로딩 중… 잠시 후 재시도.");return;}
   const ws=XLSX.utils.aoa_to_sheet([E.headers,...E.rows]);
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,(E.name||"data").slice(0,31));
@@ -403,7 +403,7 @@ async function doLookup(){
   await ensureDetail(base); await ensureDetail(cmp);
   const code=resolveCode(q.value);
   const sb=DATA.stocks[base]||{},sc=DATA.stocks[cmp]||{};
-  if(!code||!(sb[code]||sc[code])){lkHint.textContent="해당 종목을 찾을 수 없습니다.";lkSummary.innerHTML="";lkTableWrap.style.display="none";return;}
+  if(!code||!(sb[code]||sc[code])){lkHint.textContent="종목을 찾을 수 없음.";lkSummary.innerHTML="";lkTableWrap.style.display="none";return;}
   const b=sb[code],c=sc[code];
   lkStockName=((b||c)&&(b||c).name)?(b||c).name:code;
   const wCur=b&&b.mcap?b.val/b.mcap*100:0,wCmp=c&&c.mcap?c.val/c.mcap*100:0;
@@ -425,7 +425,7 @@ async function doLookup(){
     let st=e.valCmp<=0&&e.valCur>0?"신규":(e.valCur<=0&&e.valCmp>0?"제외":(dV>0?"증가":(dV<0?"감소":"유지")));
     return {...e,dVal:dV,status:st};});
   lkBd=bd; lkCd=cd; lkSort={key:"valCur",dir:-1};
-  if(lkArr.length===0){lkTableWrap.innerHTML=`<div style="padding:14px" class="muted">이 종목의 ETF 상세 데이터가 없습니다. (샘플엔 일부 종목만 포함)</div>`;lkTableWrap.style.display="block";return;}
+  if(lkArr.length===0){lkTableWrap.innerHTML=`<div style="padding:14px" class="muted">이 종목의 ETF 상세 데이터 없음.</div>`;lkTableWrap.style.display="block";return;}
   renderLkTable();
 }
 
@@ -489,7 +489,7 @@ function renderEtf(){
   etfMeta[base]=etfMeta[base]||{};etfMeta[cmp]=etfMeta[cmp]||{};etfHold[base]=etfHold[base]||{};etfHold[cmp]=etfHold[cmp]||{};
   const nameOf=e=>((etfMeta[base][e]||etfMeta[cmp][e]||{}).name)||e;
   etfChips.innerHTML=etfSel.map(e=>`<span class="chip"><b>${nameOf(e)}</b><span class="code">${e}</span><span class="x" onclick="removeEtf('${e}')">×</span></span>`).join("")
-    ||`<span class="hint">위에서 ETF를 추가하세요.</span>`;
+    ||`<span class="hint">상단에서 ETF 추가.</span>`;
   if(etfSel.length===0){etfAum.innerHTML="";etfMatrix.style.display="none";return;}
   etfAum.innerHTML=`<div class="hint">셀 = 분석일(${bd}) 비중%·보유액(억) / 작은 숫자 = ${cd} 대비 변화</div>`;
   const stocks=new Set();
@@ -525,7 +525,7 @@ function renderStrat(){
   etfMeta[base]=etfMeta[base]||{};etfMeta[cmp]=etfMeta[cmp]||{};etfHold[base]=etfHold[base]||{};etfHold[cmp]=etfHold[cmp]||{};
   const e=stratSel;
   const nameOf=x=>((etfMeta[base][x]||etfMeta[cmp][x]||{}).name)||x;
-  stratChip.innerHTML = e?`<span class="chip"><b>${nameOf(e)}</b><span class="code">${e}</span><span class="x" onclick="clearStrat()">×</span></span>`:`<span class="hint">위에서 ETF를 선택하세요.</span>`;
+  stratChip.innerHTML = e?`<span class="chip"><b>${nameOf(e)}</b><span class="code">${e}</span><span class="x" onclick="clearStrat()">×</span></span>`:`<span class="hint">상단에서 ETF 선택.</span>`;
   if(!e){stratSummary.innerHTML="";stratTableWrap.style.display="none";return;}
   const hb=(etfHold[base]||{})[e]||{}, hc=(etfHold[cmp]||{})[e]||{};
   const aumB=((etfMeta[base]||{})[e]||{}).aum||0, aumC=((etfMeta[cmp]||{})[e]||{}).aum||0;
@@ -589,7 +589,7 @@ function renderStrat(){
   const dateNote=`<div class="hint" style="margin-bottom:6px">🗓 실제 매매일 — 분석일 <b>${asB?fmtDate(asB):"?"}</b> · 비교시점 <b>${asC?fmtDate(asC):"?"}</b> <span class="muted">(각 표시일의 전 영업일)</span></div>`;
   const modeNote=usingQ
     ?`<div class="hint" style="margin-bottom:6px">✅ 계약수(1CU당 보유수량) 변화 기준 — 증량·감량·편출입 확정</div>`
-    :`<div class="hint" style="margin-bottom:6px">⚠️ 이 구간은 계약수 데이터가 없어 <b>보유액/시총 추정</b>으로 표시합니다(매수·매도 = 추정, 계약수 열은 –).</div>`;
+    :`<div class="hint" style="margin-bottom:6px">⚠️ 계약수 데이터 없음 — <b>보유액/시총 추정</b> (매수·매도 = 추정, 계약수 열 –)</div>`;
   let h=dateNote+modeNote+"<table><thead><tr><th class='l'>#</th>"+cols.map(c=>{const act=c.k===stratSort.key;
     return `<th class="${c.cls||''}${act?' active':''}" data-k="${c.k}">${c.t}${act?`<span class="sortind">${ind}</span>`:""}</th>`;}).join("")+"</tr></thead><tbody>";
   rws.forEach((r,i)=>{
