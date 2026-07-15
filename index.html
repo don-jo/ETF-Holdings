@@ -73,10 +73,10 @@
 </header>
 <main>
   <div class="tabs" id="maintabs">
-    <div class="tab active" data-tab="stock">개별종목 조회</div>
     <div class="tab" data-tab="market">시장 전체</div>
-    <div class="tab" data-tab="etf">ETF별 비교</div>
+    <div class="tab active" data-tab="stock">개별종목 조회</div>
     <div class="tab" data-tab="strat">ETF 전략변화</div>
+    <div class="tab" data-tab="etf">ETF별 비교</div>
   </div>
 
   <!-- 1. 개별종목 조회 -->
@@ -225,6 +225,11 @@ function gotoLookup(code){
   q.value=nm&&nm.name?`${nm.name} (${code})`:code;
   switchTab("stock");
   doLookup();
+}
+function gotoStrat(etf){
+  stratSel=etf; stratSort={key:"wB",dir:-1};
+  switchTab("strat");
+  renderStrat();
 }
 
 const won=v=>(v==null||isNaN(v))?"-":Math.round(v).toLocaleString();
@@ -443,6 +448,7 @@ function renderLkTable(){
   rows.forEach((e,i)=>{
     h+=`<tr><td class="l muted">${i+1}</td>`+cols.map(c=>{
       let v=e[c.k];
+      if(c.k==="name")return `<td class="l name"><span style="cursor:pointer;color:var(--accent)" title="클릭 → ETF 전략변화" onclick="gotoStrat('${e.etf}')">${v}</span></td>`;
       if(c.f==="pct")return `<td>${pct(v)}</td>`;
       if(c.f==="won")return `<td>${won(v)}</td>`;
       if(c.f==="wonsign")return `<td class="${sCls(v)}">${sTxt(v,'won')}</td>`;
