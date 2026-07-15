@@ -11,3 +11,10 @@ To https://github.com/don-jo/ETF-Holdings.git
 ====================================================
 [시작] 2026-07-14 23:42:06.99
 [크롤 종료코드 0]
+[main 25d9538] 데이터 갱신 2026-07-14 23:49:58.51
+ 5 files changed, 7 insertions(+), 2 deletions(-)
+ create mode 100644 data/detail_20260714.json
+ create mode 100644 data/stocks_20260714.json
+To https://github.com/don-jo/ETF-Holdings.git
+   6fc49c3..25d9538  main -> main
+[완료] 2026-07-14 23:50:02.34

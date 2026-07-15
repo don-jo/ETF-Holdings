@@ -160,6 +160,7 @@
       • <b>ETF내 비중%</b> <span class="muted">(조회 탭 표)</span> = 그 <b>ETF 포트폴리오 안</b>에서 이 종목이 차지하는 비중(KRX 원자료).<br>
       • <b>계약수</b> = ETF PDF의 1CU(설정단위)당 보유 수량. 주가·자금유출입과 무관해 전략변화 탭의 증량/감량 판정에 사용.<br>
       • <b>제외 항목</b>: 시총 대비 계산은 <u>국내 상장 개별주식만</u> 집계. 해외주식·채권·선물·외화현금 등 국내 시총이 없는 항목은 제외(비중 왜곡 방지). 원화현금은 보유액엔 포함(계약수 없음). 다른 ETF 보유분(ETF-in-ETF)은 2025·2024는 포함, 2026은 미포함.<br>
+      • <b>날짜 의미</b>: 표시 날짜는 PDF <u>공표일</u>이고, 그 구성은 <b>전 영업일 종가 기준 실제 보유</b>예요. 즉 편출·매매는 실제로 표시일의 <b>전 영업일</b>에 실행된 것. (PDF가 장 시작 전 전일 기준으로 공표되는 구조)<br>
       • <b>단위·오차</b>: 금액은 억원. KRX 비중이 소수 2자리 반올림이라 미세한 오차가 있을 수 있음.<br>
       <span class="muted">※ 공개 데이터를 개인·연구 목적으로 재구성한 자료입니다.</span>
     </div>
@@ -208,6 +209,22 @@ function downloadXlsx(tab){
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,(E.name||"data").slice(0,31));
   XLSX.writeFile(wb,E.file||"data.xlsx");
+}
+// 표시 날짜의 '실제 보유 기준일' = 전 영업일(PDF는 전일 종가 기준으로 장전 공표)
+function prevBiz(d){const a=(DATA.dates||[]).filter(x=>x<d).sort();return a.length?a[a.length-1]:null;}
+function switchTab(name){
+  activeTab=name;
+  maintabs.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.tab===name));
+  document.getElementById("panel-stock").style.display=name==="stock"?"":"none";
+  document.getElementById("panel-market").style.display=name==="market"?"":"none";
+  document.getElementById("panel-etf").style.display=name==="etf"?"":"none";
+  document.getElementById("panel-strat").style.display=name==="strat"?"":"none";
+}
+function gotoLookup(code){
+  const nm=(DATA.stocks[dval(baseSel)]||{})[code];
+  q.value=nm&&nm.name?`${nm.name} (${code})`:code;
+  switchTab("stock");
+  doLookup();
 }
 
 const won=v=>(v==null||isNaN(v))?"-":Math.round(v).toLocaleString();
@@ -345,6 +362,7 @@ function renderMarket(){
   rows.forEach((row,i)=>{
     h+=`<tr><td class='l muted'>${i+1}</td>`+cols.map(c=>{
       let v=row[c.k];
+      if(c.k==="name")return `<td class="l name"><span style="cursor:pointer;color:var(--accent)" title="클릭 → 개별종목 조회" onclick="gotoLookup('${row.code}')">${v}</span></td>`;
       if(c.f==="pct")return `<td>${pct(v)}</td>`;
       if(c.f==="won")return `<td>${won(v)}</td>`;
       if(c.f==="int")return `<td>${v||0}</td>`;
@@ -558,10 +576,12 @@ function renderStrat(){
     return stratSort.dir<0?y-x:x-y;});
   const ind=stratSort.dir<0?"▼":"▲";  const tagCls={"신규":"신규","증량":"증가","감량":"감소","매수":"증가","매도":"감소","제외":"제외","유지":"유지","-":"유지"};
   const tagLab={"신규":"신규","증량":"↑증량","감량":"↓감량","매수":"↑매수(추정)","매도":"↓매도(추정)","제외":"제외","유지":"– 유지","-":"–"};
+  const asB=prevBiz(base), asC=prevBiz(cmp);
+  const dateNote=`<div class="hint" style="margin-bottom:6px">📅 표시일 = PDF 공표일. <b>실제 보유 기준일 = 전 영업일</b> — 분석일 ${bd} → 실제 <b>${asB?fmtDate(asB):"?"}</b> / 비교시점 ${cd} → 실제 <b>${asC?fmtDate(asC):"?"}</b>. 편출·증감은 이 기준일에 실행된 매매예요.</div>`;
   const modeNote=usingQ
     ?`<div class="hint" style="margin-bottom:6px">✅ 계약수(1CU당 보유수량) 변화 기준 — 증량·감량·편출입 확정</div>`
     :`<div class="hint" style="margin-bottom:6px">⚠️ 이 구간은 계약수 데이터가 없어 <b>보유액/시총 추정</b>으로 표시합니다(매수·매도 = 추정, 계약수 열은 –).</div>`;
-  let h=modeNote+"<table><thead><tr><th class='l'>#</th>"+cols.map(c=>{const act=c.k===stratSort.key;
+  let h=dateNote+modeNote+"<table><thead><tr><th class='l'>#</th>"+cols.map(c=>{const act=c.k===stratSort.key;
     return `<th class="${c.cls||''}${act?' active':''}" data-k="${c.k}">${c.t}${act?`<span class="sortind">${ind}</span>`:""}</th>`;}).join("")+"</tr></thead><tbody>";
   rws.forEach((r,i)=>{
     h+=`<tr><td class="l muted">${i+1}</td>`+cols.map(c=>{
