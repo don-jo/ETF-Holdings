@@ -78,6 +78,9 @@
     <div class="tab" data-tab="strat">ETF 전략변화</div>
     <div class="tab" data-tab="etf">ETF별 비교</div>
   </div>
+  <div style="background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:14px;font-size:12.5px;color:var(--text)">
+    📅 <b>표시 날짜 = PDF 공표일</b>이고, 그 구성은 <b>전 영업일(D-1) 종가 기준 실제 보유</b>예요. 즉 <b>편출·매매는 실제로 표시일의 전 영업일에 실행</b>된 거예요. <span class="muted">(예: 표시 7/15 = 실제 7/14 매매)</span>
+  </div>
 
   <!-- 1. 개별종목 조회 -->
   <section id="panel-stock">
@@ -155,12 +158,12 @@
   <details>
     <summary style="cursor:pointer">📌 계산 방식 · 예외 처리 (펼치기)</summary>
     <div style="margin-top:8px;line-height:1.8">
+      • <b>데이터 범위</b>: 2025~2026년 전 거래일. 계약수·ETF-in-ETF 전 기간 반영. (2024년은 미수집)<br>
       • <b>ETF보유액</b> = 각 ETF 순자산(AUM) × 그 종목의 ETF내 비중(PDF 비중). 그 종목을 담은 모든 ETF에 걸쳐 합산.<br>
       • <b>ETF보유비중%</b> <span class="muted">(시장전체 탭 · 조회 탭 상단)</span> = Σ(ETF보유액) ÷ 종목 시가총액 × 100. <b>시총 대비</b> 전체 ETF가 보유한 비율.<br>
       • <b>ETF내 비중%</b> <span class="muted">(조회 탭 표)</span> = 그 <b>ETF 포트폴리오 안</b>에서 이 종목이 차지하는 비중(KRX 원자료).<br>
       • <b>계약수</b> = ETF PDF의 1CU(설정단위)당 보유 수량. 주가·자금유출입과 무관해 전략변화 탭의 증량/감량 판정에 사용.<br>
-      • <b>제외 항목</b>: 시총 대비 계산은 <u>국내 상장 개별주식만</u> 집계. 해외주식·채권·선물·외화현금 등 국내 시총이 없는 항목은 제외(비중 왜곡 방지). 원화현금은 보유액엔 포함(계약수 없음). 다른 ETF 보유분(ETF-in-ETF)은 2025·2024는 포함, 2026은 미포함.<br>
-      • <b>날짜 의미</b>: 표시 날짜는 PDF <u>공표일</u>이고, 그 구성은 <b>전 영업일 종가 기준 실제 보유</b>예요. 즉 편출·매매는 실제로 표시일의 <b>전 영업일</b>에 실행된 것. (PDF가 장 시작 전 전일 기준으로 공표되는 구조)<br>
+      • <b>제외 항목</b>: 시총 대비 계산은 <u>국내 상장 개별주식만</u> 집계. 해외주식·채권·선물·외화현금 등 국내 시총이 없는 항목은 제외(비중 왜곡 방지). 원화현금은 보유액엔 포함(계약수 없음). 다른 ETF 보유분(ETF-in-ETF)은 <b>2025·2026 전 기간 포함</b>.<br>
       • <b>단위·오차</b>: 금액은 억원. KRX 비중이 소수 2자리 반올림이라 미세한 오차가 있을 수 있음.<br>
       <span class="muted">※ 공개 데이터를 개인·연구 목적으로 재구성한 자료입니다.</span>
     </div>
