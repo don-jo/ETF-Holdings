@@ -586,7 +586,7 @@ function renderStrat(){
   const ind=stratSort.dir<0?"▼":"▲";  const tagCls={"신규":"신규","증량":"증가","감량":"감소","매수":"증가","매도":"감소","제외":"제외","유지":"유지","-":"유지"};
   const tagLab={"신규":"신규","증량":"↑증량","감량":"↓감량","매수":"↑매수(추정)","매도":"↓매도(추정)","제외":"제외","유지":"– 유지","-":"–"};
   const asB=prevBiz(base), asC=prevBiz(cmp);
-  const dateNote=`<div class="hint" style="margin-bottom:6px">📅 표시일 = PDF 공표일. <b>실제 보유 기준일 = 전 영업일</b> — 분석일 ${bd} → 실제 <b>${asB?fmtDate(asB):"?"}</b> / 비교시점 ${cd} → 실제 <b>${asC?fmtDate(asC):"?"}</b>. 편출·증감은 이 기준일에 실행된 매매예요.</div>`;
+  const dateNote=`<div class="hint" style="margin-bottom:6px">🗓 실제 매매일 — 분석일 <b>${asB?fmtDate(asB):"?"}</b> · 비교시점 <b>${asC?fmtDate(asC):"?"}</b> <span class="muted">(각 표시일의 전 영업일)</span></div>`;
   const modeNote=usingQ
     ?`<div class="hint" style="margin-bottom:6px">✅ 계약수(1CU당 보유수량) 변화 기준 — 증량·감량·편출입 확정</div>`
     :`<div class="hint" style="margin-bottom:6px">⚠️ 이 구간은 계약수 데이터가 없어 <b>보유액/시총 추정</b>으로 표시합니다(매수·매도 = 추정, 계약수 열은 –).</div>`;
