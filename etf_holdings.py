@@ -140,6 +140,11 @@ except Exception:
 # 유틸 / 로그인
 # ============================================================
 
+def _kst_now():
+    """한국시간(KST) 현재 시각. GitHub Actions(UTC)에서 돌아도 KST로 표시."""
+    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)
+
+
 def _to_num(s):
     if isinstance(s, str):
         s = s.replace(",", "").strip()
@@ -608,7 +613,7 @@ def write_excel(path, base_date, cmp_date, t_base, t_cmp, det_base, det_cmp, nam
     ws0 = wb.create_sheet("0_요약")
     for r in [["항목", "값"], ["기준일(현재)", base_date], ["비교 기준일", cmp_date],
               ["분석 종목 수", len(full)],
-              ["생성 시각", dt.datetime.now().strftime("%Y-%m-%d %H:%M")],
+              ["생성 시각", _kst_now().strftime("%Y-%m-%d %H:%M") + " KST"],
               ["방법론", "표의 %·억 값은 원본(원) 컬럼에서 엑셀 수식으로 계산됩니다."]]:
         ws0.append(r)
     style_header(ws0, 2)
@@ -786,7 +791,7 @@ def update_web_data(date, agg, mcap, detail, names):
     data.pop("detail", None)
     data.pop("stocks", None)
     data["dates"] = sorted(set(data.get("dates", [])) | {date})
-    data["generated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M") + " 갱신"
+    data["generated"] = _kst_now().strftime("%Y-%m-%d %H:%M") + " 갱신 (KST)"
     with open(djson, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
@@ -891,7 +896,7 @@ def trading_days_of_year(year):
         except Exception:
             out.append(str(d).replace("-", "")[:8])
     # 오늘 날짜는 제외(장중/당일분은 --year 배치에서 받지 않음)
-    _today = dt.date.today().strftime("%Y%m%d")
+    _today = _kst_now().strftime("%Y%m%d")   # KST 기준 오늘
     out = [d for d in out if d < _today]
     return sorted(set(out))
 
