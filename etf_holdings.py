@@ -998,13 +998,22 @@ def main():
     print(f"\n크롤 대상 날짜 ({len(dates)}개): {dates}\n")
 
     store = {}
+    failed = []
     for n, date in enumerate(dates, 1):
         print(f"===== [{n}/{len(dates)}] {date} =====")
         if _crawl_one(date):
             store[date] = True
+        else:
+            failed.append(date)
         if REST_BETWEEN and n < len(dates):
             print(f"  ({REST_BETWEEN}초 쉬는 중... throttle 방지)")
             time.sleep(REST_BETWEEN)
+
+    if failed:
+        # 실패를 0으로 숨기면 GitHub Actions가 '성공'으로 표시된다 → 종료코드 3(재시도 필요)
+        print(f"\n[실패] 수집 못한 날짜: {failed}")
+        print("  (KRX 빈 응답/throttle 가능성. 잠시 후 재시도 필요)")
+        return 3
 
     print("\n[웹] data.json / detail_*.json 모두 갱신 완료.")
     print("\n완료!")
