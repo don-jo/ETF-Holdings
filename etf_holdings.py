@@ -89,11 +89,12 @@ except Exception as _imp_e:
 BASE_DATE = ""              # 분석 기준일. "" 이면 최근 영업일 자동. "YYYYMMDD"
 COMPARE_DATE = "20251230"   # 비교 기준일(2025년 마지막 거래일)
 
-# 동시요청: IP 차단 이후 안전하게 10 고정(요청 속도를 낮춰 throttle 회피).
-WORKERS = 10
+# 동시요청. 환경변수 KRX_WORKERS로 덮어쓸 수 있음(GitHub Actions는 회선이 빨라
+# 같은 값이어도 요청 속도가 4~5배 → 더 낮은 값을 줘야 KRX throttle을 피함).
+WORKERS = int(os.environ.get("KRX_WORKERS", "10"))
 RETRIES = 4        # PDF 조회 실패/빈응답 시 재시도 횟수
 TOP_N = 300        # 시트1·2 상위 개수 (None 이면 전체)
-SLEEP = 0.1        # 각 요청 후 추가 대기(초). throttle 완화용.
+SLEEP = float(os.environ.get("KRX_SLEEP", "0.1"))  # 요청 후 대기(초). 환경변수로 조절.
 ASK_DATES = True   # (현재 미사용) 호환용
 REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
 BATCH_PER_RUN = 1      # 한 번 실행에 1일치만(매 날짜 새 로그인 → 세션 만료 회피)

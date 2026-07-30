@@ -2,21 +2,22 @@ name: 매일 ETF 데이터 수집
 
 on:
   schedule:
-    # 평일 19:00 KST = 10:00 UTC (월~금)
-    - cron: '0 10 * * 1-5'
-  workflow_dispatch:        # 깃허브에서 수동 실행 버튼
+    # 평일 18:30 KST = 09:30 UTC (월~금). GitHub 크론은 수십 분 지연될 수 있어
+    # 실제 실행은 19시 전후가 되는 경우가 많음.
+    - cron: '30 9 * * 1-5'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-concurrency:                # 동시 실행 방지(중복 크롤/커밋 충돌 차단)
+concurrency:
   group: etf-daily
   cancel-in-progress: false
 
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -27,13 +28,37 @@ jobs:
       - name: 패키지 설치
         run: pip install --quiet pykrx pandas tqdm openpyxl requests
 
+      # GitHub 러너는 회선이 빨라 같은 WORKERS라도 요청 속도가 4~5배 → KRX throttle.
+      # 워커를 줄이고 요청 간 대기를 늘려 초당 요청수를 낮춘다.
+      # throttle(종료코드 3)이면 쉬었다 최대 3회까지 재시도.
       - name: 크롤링 (최근 영업일)
         env:
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
-        run: python etf_holdings.py --auto --withetf
+          KRX_WORKERS: '4'
+          KRX_SLEEP: '0.5'
+        run: |
+          for i in 1 2 3; do
+            echo "===== 시도 $i/3 ====="
+            set +e
+            python etf_holdings.py --auto --withetf
+            code=$?
+            set -e
+            if [ $code -eq 0 ]; then
+              echo "수집 성공"
+              exit 0
+            fi
+            echo "종료코드 $code (throttle 의심)"
+            if [ $i -lt 3 ]; then
+              echo "20분 쉬었다 재시도..."
+              sleep 1200
+            fi
+          done
+          echo "3회 모두 실패"
+          exit 1
 
       - name: 변경분 커밋 & 푸시
+        if: success()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
