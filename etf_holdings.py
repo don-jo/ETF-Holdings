@@ -98,6 +98,7 @@ SLEEP = float(os.environ.get("KRX_SLEEP", "0.1"))  # 요청 후 대기(초). 환
 ASK_DATES = True   # (현재 미사용) 호환용
 REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
 BATCH_PER_RUN = 1      # 한 번 실행에 1일치만(매 날짜 새 로그인 → 세션 만료 회피)
+AUTO_MAX_DAYS = 3      # --auto 1회 실행에 최대 몇 날짜까지 (빠진 날 보충 포함)
 FAIL_RATIO_LIMIT = 0.05  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
 MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
 WRITE_CACHE = False # 집계 캐시(.pkl) 저장 안 함. 이어받기는 웹파일 기준이라 불필요+디스크 낭비 방지.
@@ -855,6 +856,23 @@ def _make_excel(base, store):
     print(f"  엑셀: {out}")
 
 
+def recent_business_days(n=10):
+    """최근 거래일 목록(KST). 장 마감(16시) 전의 '오늘'은 확정 종가가 없어 제외."""
+    now = _kst_now()
+    today = now.strftime("%Y%m%d")
+    try:
+        days = stock.get_previous_business_days(
+            fromdate=(now - dt.timedelta(days=n * 3)).strftime("%Y%m%d"),
+            todate=today)
+        out = sorted({d.strftime("%Y%m%d") for d in days})
+    except Exception as e:
+        print("  거래일 목록 조회 실패:", e)
+        return []
+    if now.hour < 16:          # 장중/개장전이면 오늘은 아직 미확정
+        out = [d for d in out if d < today]
+    return out[-n:]
+
+
 def _is_done(date):
     """'새 스키마'로 받아졌는지 — stocks 파일에 price(종가)가 있으면 완료.
     옛 스키마(price 없음)는 미완료로 봐서 자동 재크롤한다."""
@@ -994,7 +1012,18 @@ def main():
     if YEAR:
         return run_year_batch()
 
-    dates = [resolve_base_date()] if AUTO else ask_dates_multi()
+    if AUTO:
+        # 최근 거래일 중 (a) 아직 못 받은 날 + (b) 가장 최근 완료일(확정 종가로 갱신)
+        recent = recent_business_days(10)
+        if recent:
+            latest = recent[-1]
+            missing = [d for d in recent if not _is_done(d)]
+            dates = sorted(set(missing + [latest]))[-AUTO_MAX_DAYS:]
+            print(f"  (최근 거래일 {len(recent)}개 중 미수집 {len(missing)}개 / 최신일 {latest})")
+        else:
+            dates = [resolve_base_date()]
+    else:
+        dates = ask_dates_multi()
     dates = sorted(set(dates))
     print(f"\n크롤 대상 날짜 ({len(dates)}개): {dates}\n")
 
