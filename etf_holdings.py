@@ -98,7 +98,8 @@ SLEEP = float(os.environ.get("KRX_SLEEP", "0.1"))  # 요청 후 대기(초). 환
 ASK_DATES = True   # (현재 미사용) 호환용
 REST_BETWEEN = 30  # 날짜 사이 쉬는 시간(초). throttle 누적 방지.
 BATCH_PER_RUN = 1      # 한 번 실행에 1일치만(매 날짜 새 로그인 → 세션 만료 회피)
-AUTO_MAX_DAYS = 3      # --auto 1회 실행에 최대 몇 날짜까지 (빠진 날 보충 포함)
+AUTO_MAX_DAYS = 1      # --auto 1회 실행에 1일치만. KRX는 "시간당 누적 요청량"을 보므로
+                       # 한 번에 여러 날 받으면 차단된다. 빠진 날은 다음 실행에서 순차 보충.
 FAIL_RATIO_LIMIT = 0.05  # PDF 실패율이 이보다 높으면 throttle로 간주 → 저장 안 하고 다음에 재시도
 MAKE_EXCEL = False  # 엑셀 생성 안 함(웹 데이터만). True면 수동 실행 시 엑셀도 생성.
 WRITE_CACHE = False # 집계 캐시(.pkl) 저장 안 함. 이어받기는 웹파일 기준이라 불필요+디스크 낭비 방지.

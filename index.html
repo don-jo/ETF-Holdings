@@ -202,6 +202,7 @@ let lkArr=[], lkSort={key:"valCur",dir:-1}, lkBd="", lkCd="";
 let etfMeta={}, etfHold={};  // [date][etf]={name,aum}  /  [date][etf]={stock:{w,val}}
 let stratSel=null, stratSort={key:"wB",dir:-1};
 let ETFCODES=new Set();  // 상장 ETF 전체 코드(시장전체 탭에서 제외용)
+let MISSING_DETAIL=new Set();  // ETF 상세가 아직 없는 날짜(수집 중) — 안내용
 let EXPORTS={}, lkStockName="";
 const XLround=(v,d)=>{d=(d==null?2:d);return (v==null||isNaN(v))?"":Math.round(v*Math.pow(10,d))/Math.pow(10,d);};
 function downloadXlsx(tab){
@@ -277,8 +278,10 @@ async function ensureStocks(date){
 async function ensureDetail(date){
   DATA.detail=DATA.detail||{};
   if(DATA.detail[date]){ if(!etfMeta[date])buildEtfIndexForDate(date); return; }
-  try{ const r=await fetch(`data/detail_${date}.json`); DATA.detail[date]=r.ok?await r.json():{}; }
-  catch(e){ DATA.detail[date]={}; }
+  let ok=true;
+  try{ const r=await fetch(`data/detail_${date}.json`); if(r.ok){DATA.detail[date]=await r.json();}else{DATA.detail[date]={};ok=false;} }
+  catch(e){ DATA.detail[date]={}; ok=false; }
+  if(!ok)MISSING_DETAIL.add(date);
   buildEtfIndexForDate(date);
 }
 async function refreshData(){
@@ -286,7 +289,10 @@ async function refreshData(){
   genInfo.textContent=g+" · 불러오는 중…";
   await ensureStocks(dval(baseSel)); await ensureStocks(dval(cmpSel));
   await ensureDetail(dval(baseSel)); await ensureDetail(dval(cmpSel));
-  genInfo.textContent=g;
+  const miss=[dval(baseSel),dval(cmpSel)].filter(d=>MISSING_DETAIL.has(d));
+  genInfo.textContent = miss.length
+    ? `${g} · ⚠️ ${miss.map(fmtDate).join(", ")} ETF 상세 수집 중(ETF 탭 제한)`
+    : g;
   refreshLists(); renderAll();
 }
 

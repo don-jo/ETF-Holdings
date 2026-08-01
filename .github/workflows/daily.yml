@@ -31,30 +31,29 @@ jobs:
       # GitHub 러너는 회선이 빨라 같은 WORKERS라도 요청 속도가 4~5배 → KRX throttle.
       # 워커를 줄이고 요청 간 대기를 늘려 초당 요청수를 낮춘다.
       # throttle(종료코드 3)이면 쉬었다 최대 3회까지 재시도.
+      # KRX는 '시간당 누적 요청량'으로 IP를 차단한다(하루 1155개 PDF).
+      # → 워커/속도를 낮추고, 한 번 실행에 1일치만, 재시도도 최소로.
+      #   차단(HTML 응답)된 상태에서 계속 두드리면 차단이 연장되므로 재시도는 1회뿐.
       - name: 크롤링 (최근 영업일)
         env:
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
-          KRX_WORKERS: '4'
-          KRX_SLEEP: '0.5'
+          KRX_WORKERS: '3'
+          KRX_SLEEP: '0.7'
         run: |
-          for i in 1 2 3; do
-            echo "===== 시도 $i/3 ====="
-            set +e
-            python etf_holdings.py --auto --withetf
-            code=$?
-            set -e
-            if [ $code -eq 0 ]; then
-              echo "수집 성공"
-              exit 0
-            fi
-            echo "종료코드 $code (throttle 의심)"
-            if [ $i -lt 3 ]; then
-              echo "20분 쉬었다 재시도..."
-              sleep 1200
-            fi
-          done
-          echo "3회 모두 실패"
+          set +e
+          python etf_holdings.py --auto --withetf
+          code=$?
+          set -e
+          if [ $code -eq 0 ]; then echo "수집 성공"; exit 0; fi
+          echo "종료코드 $code — 60분 쉬었다 1회만 재시도"
+          sleep 3600
+          set +e
+          python etf_holdings.py --auto --withetf
+          code=$?
+          set -e
+          if [ $code -eq 0 ]; then echo "재시도 성공"; exit 0; fi
+          echo "실패 — 다음 예약 실행에서 자동으로 다시 시도합니다"
           exit 1
 
       - name: 변경분 커밋 & 푸시
