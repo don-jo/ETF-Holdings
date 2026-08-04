@@ -1,10 +1,11 @@
 name: 매일 ETF 데이터 수집
 
+# ⛔ 2026-08-02: KRX가 자동화 수집을 약관(제10조 2호)으로 금지 + IP 제한 통보.
+#    예약 실행을 중단함. 아래 schedule 블록은 주석 처리 상태.
+#    (재개하려면 주석을 풀되, KRX 공식 경로 확인 후에만.)
 on:
-  schedule:
-    # 평일 18:30 KST = 09:30 UTC (월~금). GitHub 크론은 수십 분 지연될 수 있어
-    # 실제 실행은 19시 전후가 되는 경우가 많음.
-    - cron: '30 9 * * 1-5'
+  # schedule:
+  #   - cron: '30 9 * * 1-5'
   workflow_dispatch:
 
 permissions:

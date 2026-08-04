@@ -6,3 +6,7 @@ krx_계정.txt
 cache/
 __pycache__/
 *.pyc
+
+# API 키가 들어있는 테스트 파일 (공개 금지)
+키움API테스트.py
+키움API테스트.bat
